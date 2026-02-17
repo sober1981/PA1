@@ -1,0 +1,115 @@
+# ============================================================================
+# Scorecard Performance Agent - Configuration
+# ============================================================================
+
+# Path to the master Excel file (OneDrive synced from SharePoint)
+# The agent will auto-detect the most recent MASTER_MCS_MERGE_*.xlsx if not set
+data:
+  # Folders to search for the master file (in order of priority)
+  search_paths:
+    - "C:\\Users\\jsoberanes\\OneDrive - Scout Downhole\\Drilling Opt Projects\\Scorecard\\Working DB versions"
+    - "C:\\Users\\jsoberanes\\OneDrive - Scout Downhole\\Drilling Opt Projects\\Scorecard\\power bi"
+  # File pattern to match
+  file_pattern: "MASTER_MCS_MERGE_*.xlsx"
+  # Sheet to read (main data sheet)
+  sheet_name: "Sheet1"
+
+# Date filtering
+filtering:
+  # Primary date column for identifying new runs
+  date_column: "DATE_OUT"
+  # Secondary filter column
+  week_column: "Week #"
+  # Comparison baseline: 2025+ data only for benchmarking (better data quality)
+  # Historical/aggregate queries use ALL available data (2017+)
+  comparison_start_date: "2025-01-01"
+
+# ============================================================================
+# Variable Groups - dimensions used for comparisons
+# ============================================================================
+variable_groups:
+  motor:
+    columns: ["MOTOR_MODEL", "LOBE/STAGE", "MOTOR_TYPE2", "BEND_HSG"]
+  bit:
+    columns: ["BIT_MODEL"]
+  location:
+    columns: ["BASIN", "COUNTY", "FORMATION"]
+  section:
+    columns: ["HOLE_SIZE", "Phase_CALC"]
+  depth:
+    columns: ["DEPTH_IN", "DEPTH_OUT", "TOTAL_DRILL"]
+
+# ============================================================================
+# KPI thresholds and settings
+# ============================================================================
+kpis:
+  avg_rop:
+    enabled: true
+    # Flag runs that are this many std devs below the comparison mean
+    flag_below_std: 1.0
+    # Flag runs that are this many std devs above the comparison mean
+    flag_above_std: 1.5
+    # Comparison fallback chain (most specific → least specific)
+    # Each level is tried in order; first with enough samples wins
+    comparison_levels:
+      - ["HOLE_SIZE", "Phase_CALC", "BASIN", "COUNTY", "FORMATION", "MOTOR_MODEL"]
+      - ["HOLE_SIZE", "Phase_CALC", "BASIN", "COUNTY", "MOTOR_MODEL"]
+      - ["HOLE_SIZE", "Phase_CALC", "BASIN", "MOTOR_MODEL"]
+      - ["HOLE_SIZE", "Phase_CALC", "BASIN"]
+      - ["HOLE_SIZE", "BASIN"]
+      - ["BASIN", "Phase_CALC"]
+      - ["BASIN"]
+
+  longest_runs:
+    enabled: true
+    # Number of top runs to highlight
+    top_n: 5
+    # Comparison fallback chain
+    comparison_levels:
+      - ["HOLE_SIZE", "Phase_CALC", "BASIN", "COUNTY", "FORMATION"]
+      - ["HOLE_SIZE", "Phase_CALC", "BASIN", "COUNTY"]
+      - ["HOLE_SIZE", "Phase_CALC", "BASIN"]
+      - ["HOLE_SIZE", "BASIN"]
+      - ["BASIN", "Phase_CALC"]
+      - ["BASIN"]
+
+  sliding_pct:
+    enabled: true
+    # Only calculate for these phases
+    phase_filter: ["LAT"]
+    # Flag runs above this percentile of historical
+    flag_above_percentile: 75
+    # Comparison fallback chain (Phase_CALC is always LAT here)
+    comparison_levels:
+      - ["BASIN", "COUNTY", "HOLE_SIZE", "MOTOR_MODEL", "FORMATION"]
+      - ["BASIN", "COUNTY", "HOLE_SIZE", "MOTOR_MODEL"]
+      - ["BASIN", "HOLE_SIZE", "MOTOR_MODEL"]
+      - ["BASIN", "HOLE_SIZE"]
+      - ["BASIN", "MOTOR_MODEL"]
+      - ["BASIN"]
+
+# Comparison settings
+comparison:
+  # Minimum number of historical runs needed for a valid comparison
+  min_sample_size: 10
+
+# ============================================================================
+# Columns that need cleaning on load
+# ============================================================================
+cleaning:
+  strip_whitespace: ["BASIN", "Phase_CALC", "OPERATOR", "WELL", "COUNTY",
+                     "FORMATION", "LOBE/STAGE", "BIT_MODEL", "MOTOR_TYPE2"]
+  to_numeric: ["ROTATE_DRILL", "SLIDE_DRILLED", "AVG_ROP", "TOTAL_DRILL",
+               "ROTATE_ROP", "SLIDE_ROP", "DRILLING_HOURS", "DEPTH_IN", "DEPTH_OUT",
+               "HOLE_SIZE", "BEND_HSG"]
+  to_datetime: ["DATE_OUT", "DATE_IN"]
+
+  # Basin name normalization (key = wrong value, value = correct value)
+  basin_aliases:
+    "TX-LA-MS Salt": "TX-LA-MS Sal"
+
+  # HOLE_SIZE outlier threshold (values above this are data entry errors)
+  hole_size_max: 26.0
+
+  # LOBE/STAGE separator standardization (normalize to ":")
+  lobe_stage_separator: ":"
