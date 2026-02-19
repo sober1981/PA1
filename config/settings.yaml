@@ -1,28 +1,32 @@
 # ============================================================================
-# Scorecard Performance Agent - Configuration
+# PA1 - Performance Agent Configuration
 # ============================================================================
 
-# Path to the master Excel file (OneDrive synced from SharePoint)
-# The agent will auto-detect the most recent MASTER_MCS_MERGE_*.xlsx if not set
+# SharePoint connection (reads master file directly like Power BI)
+sharepoint:
+  site_url: "https://scoutdownholecom.sharepoint.com/sites/DBRunsUpdate"
+  file_pattern: "MASTER_MCS_MERGE_"
+  # Exclude files with these substrings in filename
+  exclude_patterns: ["Downloaded", "TEST", "backup", "original", "back up"]
+
+# Local file search (Teams-synced folder first, then personal Scorecard folder)
 data:
-  # Folders to search for the master file (in order of priority)
   search_paths:
-    - "C:\\Users\\jsoberanes\\OneDrive - Scout Downhole\\Drilling Opt Projects\\Scorecard\\Working DB versions"
-    - "C:\\Users\\jsoberanes\\OneDrive - Scout Downhole\\Drilling Opt Projects\\Scorecard\\power bi"
-  # File pattern to match
+    - "C:\\Users\\jsoberanes\\Scout Downhole\\DB Runs Update - Documents\\General"
+    - "C:\\Users\\jsoberanes\\OneDrive - Scout Downhole\\Drilling Opt Projects\\Scorecard"
   file_pattern: "MASTER_MCS_MERGE_*.xlsx"
-  # Sheet to read (main data sheet)
   sheet_name: "Sheet1"
+  recursive: true
 
 # Date filtering
 filtering:
-  # Primary date column for identifying new runs
   date_column: "DATE_OUT"
-  # Secondary filter column
   week_column: "Week #"
-  # Comparison baseline: 2025+ data only for benchmarking (better data quality)
-  # Historical/aggregate queries use ALL available data (2017+)
   comparison_start_date: "2025-01-01"
+
+# Email
+email:
+  recipient: "jsoberanes@scoutdownhole.com"
 
 # ============================================================================
 # Variable Groups - dimensions used for comparisons
@@ -40,17 +44,68 @@ variable_groups:
     columns: ["DEPTH_IN", "DEPTH_OUT", "TOTAL_DRILL"]
 
 # ============================================================================
-# KPI thresholds and settings
+# Category 1: Week vs Previous Week
+# ============================================================================
+category1:
+  enabled: true
+
+  # Section A: Weekly Summary
+  weekly_summary:
+    group_by_primary: "JOB_TYPE"
+    group_by_secondary: "MOTOR_TYPE2"
+    metrics:
+      - column: "TOTAL_DRILL"
+        label: "Total Footage"
+        unit: "ft"
+      - column: "Total Hrs (C+D)"
+        label: "Total Hrs (C+D)"
+        unit: "hrs"
+
+  # Section B: Curves Analysis
+  curves:
+    source_filter: "Motor_KPI"
+    runs_per_cur_col: "RUNS PER CUR"
+    phase_contains: "CUR"
+
+  # Section C: Reason to POOH
+  reason_pooh:
+    source_filter: ["Motor_KPI", "CAM_Run_Tracker"]
+    wednesday_col: "REASON_POOH"
+    friday_col: "REASON_POOH_QC"
+    classifications:
+      success: ["TD", "SECTION TD", "WELL TD"]
+      motor_issues: ["MOTOR", "MOTOR FAILURE", "MOTOR CHUNKED"]
+      performance: ["ROP", "BUILD RATES"]
+      equipment: ["BHA", "MWD", "MWD FAILURE", "BIT", "RSS", "WASH OUT",
+                   "TWIST OFF", "PLUGGED STRING", "STALLS"]
+      # Everything else falls into "other"
+
+# ============================================================================
+# Category 2: Monthly Highlights
+# ============================================================================
+category2:
+  enabled: true
+
+  longest_runs:
+    top_n: 5
+
+  fastest_sections:
+    top_n: 5
+
+  operator_analysis:
+    source_filter: ["Motor_KPI", "CAM_Run_Tracker"]
+    success_values: ["TD", "SECTION TD", "WELL TD"]
+    motor_failure_values: ["MOTOR", "MOTOR FAILURE", "MOTOR CHUNKED"]
+    curve_source_filter: "Motor_KPI"
+
+# ============================================================================
+# Category 3: Historical Analysis (KPIs)
 # ============================================================================
 kpis:
   avg_rop:
     enabled: true
-    # Flag runs that are this many std devs below the comparison mean
     flag_below_std: 1.0
-    # Flag runs that are this many std devs above the comparison mean
     flag_above_std: 1.5
-    # Comparison fallback chain (most specific → least specific)
-    # Each level is tried in order; first with enough samples wins
     comparison_levels:
       - ["HOLE_SIZE", "Phase_CALC", "BASIN", "COUNTY", "FORMATION", "MOTOR_MODEL"]
       - ["HOLE_SIZE", "Phase_CALC", "BASIN", "COUNTY", "MOTOR_MODEL"]
@@ -62,9 +117,7 @@ kpis:
 
   longest_runs:
     enabled: true
-    # Number of top runs to highlight
     top_n: 5
-    # Comparison fallback chain
     comparison_levels:
       - ["HOLE_SIZE", "Phase_CALC", "BASIN", "COUNTY", "FORMATION"]
       - ["HOLE_SIZE", "Phase_CALC", "BASIN", "COUNTY"]
@@ -75,11 +128,8 @@ kpis:
 
   sliding_pct:
     enabled: true
-    # Only calculate for these phases
     phase_filter: ["LAT"]
-    # Flag runs above this percentile of historical
     flag_above_percentile: 75
-    # Comparison fallback chain (Phase_CALC is always LAT here)
     comparison_levels:
       - ["BASIN", "COUNTY", "HOLE_SIZE", "MOTOR_MODEL", "FORMATION"]
       - ["BASIN", "COUNTY", "HOLE_SIZE", "MOTOR_MODEL"]
@@ -88,28 +138,22 @@ kpis:
       - ["BASIN", "MOTOR_MODEL"]
       - ["BASIN"]
 
-# Comparison settings
 comparison:
-  # Minimum number of historical runs needed for a valid comparison
   min_sample_size: 10
 
 # ============================================================================
-# Columns that need cleaning on load
+# Data Cleaning
 # ============================================================================
 cleaning:
   strip_whitespace: ["BASIN", "Phase_CALC", "OPERATOR", "WELL", "COUNTY",
-                     "FORMATION", "LOBE/STAGE", "BIT_MODEL", "MOTOR_TYPE2"]
+                     "FORMATION", "LOBE/STAGE", "BIT_MODEL", "MOTOR_TYPE2",
+                     "JOB_TYPE", "SOURCE", "REASON_POOH", "REASON_POOH_QC"]
   to_numeric: ["ROTATE_DRILL", "SLIDE_DRILLED", "AVG_ROP", "TOTAL_DRILL",
                "ROTATE_ROP", "SLIDE_ROP", "DRILLING_HOURS", "DEPTH_IN", "DEPTH_OUT",
-               "HOLE_SIZE", "BEND_HSG"]
+               "HOLE_SIZE", "BEND_HSG", "RUNS PER CUR", "Total Hrs (C+D)", "CIRC_HOURS"]
   to_datetime: ["DATE_OUT", "DATE_IN"]
-
-  # Basin name normalization (key = wrong value, value = correct value)
+  uppercase: ["REASON_POOH", "REASON_POOH_QC"]
   basin_aliases:
     "TX-LA-MS Salt": "TX-LA-MS Sal"
-
-  # HOLE_SIZE outlier threshold (values above this are data entry errors)
   hole_size_max: 26.0
-
-  # LOBE/STAGE separator standardization (normalize to ":")
   lobe_stage_separator: ":"

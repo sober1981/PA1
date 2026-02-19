@@ -258,3 +258,137 @@ def run_all_kpis(new_runs, baseline_df, config):
     results["sliding_pct"] = kpi_sliding_pct(new_runs, baseline_df, config)
 
     return results
+
+
+def find_pattern_highlights(new_runs, baseline_df, config):
+    """
+    Open-ended pattern finding across variable group combinations.
+    For each interesting grouping, find highlights (best) and lowlights (worst)
+    and attribute to top 1-3 operators driving the result.
+    """
+    highlights = []
+    lowlights = []
+
+    if len(new_runs) == 0 or len(baseline_df) == 0:
+        return {"highlights": highlights, "lowlights": lowlights}
+
+    # Variable group combinations to analyze
+    groupings = [
+        (["BASIN", "MOTOR_TYPE2"], "AVG_ROP"),
+        (["BASIN", "HOLE_SIZE"], "AVG_ROP"),
+        (["MOTOR_TYPE2", "HOLE_SIZE"], "AVG_ROP"),
+        (["BASIN", "MOTOR_MODEL"], "AVG_ROP"),
+        (["BASIN", "MOTOR_TYPE2"], "TOTAL_DRILL"),
+    ]
+
+    for group_cols, metric in groupings:
+        # Only use runs where all group columns and the metric are non-null
+        valid_cols = [c for c in group_cols if c in new_runs.columns and c in baseline_df.columns]
+        if len(valid_cols) != len(group_cols):
+            continue
+
+        week_valid = new_runs.dropna(subset=valid_cols + [metric])
+        base_valid = baseline_df.dropna(subset=valid_cols + [metric])
+
+        if len(week_valid) < 3 or len(base_valid) < 10:
+            continue
+
+        # Aggregate by group for both week and baseline
+        week_agg = week_valid.groupby(valid_cols)[metric].agg(["mean", "count"]).reset_index()
+        base_agg = base_valid.groupby(valid_cols)[metric].agg(["mean", "count", "std"]).reset_index()
+
+        # Merge
+        merged = week_agg.merge(base_agg, on=valid_cols, suffixes=("_week", "_base"))
+        merged = merged[merged["count_base"] >= 10]  # Enough baseline data
+
+        if len(merged) == 0:
+            continue
+
+        # Calculate deviation
+        merged["diff_pct"] = ((merged["mean_week"] - merged["mean_base"]) / merged["mean_base"]) * 100
+
+        # Find highlights (top deviations)
+        for _, row in merged.nlargest(2, "diff_pct").iterrows():
+            if row["diff_pct"] > 20:  # At least 20% above baseline
+                # Find top operators in this group
+                group_mask = pd.Series(True, index=week_valid.index)
+                grouping_values = {}
+                for col in valid_cols:
+                    group_mask = group_mask & (week_valid[col] == row[col])
+                    grouping_values[col] = row[col]
+
+                group_runs = week_valid[group_mask]
+                top_ops = (group_runs.groupby("OPERATOR")[metric]
+                          .agg(["mean", "count"])
+                          .sort_values("mean", ascending=False)
+                          .head(3))
+
+                highlights.append({
+                    "variable_group": "+".join(valid_cols),
+                    "grouping_values": grouping_values,
+                    "metric": metric,
+                    "week_avg": round(row["mean_week"], 1),
+                    "baseline_avg": round(row["mean_base"], 1),
+                    "diff_pct": round(row["diff_pct"], 1),
+                    "week_count": int(row["count_week"]),
+                    "baseline_count": int(row["count_base"]),
+                    "top_operators": [
+                        {"operator": op, "avg": round(vals["mean"], 1), "count": int(vals["count"])}
+                        for op, vals in top_ops.iterrows()
+                    ],
+                })
+
+        # Find lowlights (worst deviations)
+        for _, row in merged.nsmallest(2, "diff_pct").iterrows():
+            if row["diff_pct"] < -20:  # At least 20% below baseline
+                group_mask = pd.Series(True, index=week_valid.index)
+                grouping_values = {}
+                for col in valid_cols:
+                    group_mask = group_mask & (week_valid[col] == row[col])
+                    grouping_values[col] = row[col]
+
+                group_runs = week_valid[group_mask]
+                top_ops = (group_runs.groupby("OPERATOR")[metric]
+                          .agg(["mean", "count"])
+                          .sort_values("mean", ascending=True)
+                          .head(3))
+
+                lowlights.append({
+                    "variable_group": "+".join(valid_cols),
+                    "grouping_values": grouping_values,
+                    "metric": metric,
+                    "week_avg": round(row["mean_week"], 1),
+                    "baseline_avg": round(row["mean_base"], 1),
+                    "diff_pct": round(row["diff_pct"], 1),
+                    "week_count": int(row["count_week"]),
+                    "baseline_count": int(row["count_base"]),
+                    "top_operators": [
+                        {"operator": op, "avg": round(vals["mean"], 1), "count": int(vals["count"])}
+                        for op, vals in top_ops.iterrows()
+                    ],
+                })
+
+    # Sort by magnitude of deviation
+    highlights.sort(key=lambda x: x["diff_pct"], reverse=True)
+    lowlights.sort(key=lambda x: x["diff_pct"])
+
+    return {"highlights": highlights[:5], "lowlights": lowlights[:5]}
+
+
+def run_category3(new_runs, baseline_df, config):
+    """
+    Category 3: Historical Analysis (2025+ baseline)
+    Wraps existing KPI functions + adds pattern-finding.
+    """
+    kpi_results = run_all_kpis(new_runs, baseline_df, config)
+    patterns = find_pattern_highlights(new_runs, baseline_df, config)
+
+    return {
+        "category": "Historical Analysis (2025+ Baseline)",
+        "sections": {
+            "A_avg_rop": kpi_results.get("avg_rop"),
+            "B_longest_runs": kpi_results.get("longest_runs"),
+            "C_sliding_pct": kpi_results.get("sliding_pct"),
+            "D_pattern_highlights": patterns,
+        }
+    }
