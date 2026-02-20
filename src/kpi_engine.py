@@ -20,6 +20,21 @@ def _safe_val(run, col, default="N/A"):
     return val
 
 
+def _exclude_rss(df):
+    """Exclude RSS (Rotary Steerable) runs. Check RSS_MODEL, RSS_DESCRIPTION, and BHA_DESC."""
+    mask = pd.Series(False, index=df.index)
+    if "RSS_MODEL" in df.columns:
+        mask |= df["RSS_MODEL"].notna()
+    if "RSS_DESCRIPTION" in df.columns:
+        mask |= df["RSS_DESCRIPTION"].notna()
+    if "BHA_DESC" in df.columns:
+        mask |= df["BHA_DESC"].astype(str).str.contains("RSS", case=False, na=False)
+    excluded = mask.sum()
+    if excluded > 0:
+        df = df[~mask].copy()
+    return df
+
+
 def kpi_avg_rop(new_runs, baseline_df, config):
     """
     KPI: Average ROP
@@ -180,6 +195,9 @@ def kpi_sliding_pct(new_runs, baseline_df, config):
     # Filter for LAT phase only
     lat_runs = new_runs[new_runs["Phase_CALC"].isin(phase_filter)].copy()
 
+    # Exclude RSS runs (rotary steerable — 0% sliding is expected, not meaningful)
+    lat_runs = _exclude_rss(lat_runs)
+
     # Calculate sliding % where data is available
     lat_runs = lat_runs.dropna(subset=["SLIDE_DRILLED", "TOTAL_DRILL"])
     lat_runs = lat_runs[lat_runs["TOTAL_DRILL"] > 0]
@@ -187,6 +205,7 @@ def kpi_sliding_pct(new_runs, baseline_df, config):
 
     # Calculate baseline sliding % for LAT runs
     lat_baseline = baseline_df[baseline_df["Phase_CALC"].isin(phase_filter)].copy()
+    lat_baseline = _exclude_rss(lat_baseline)
     lat_baseline = lat_baseline.dropna(subset=["SLIDE_DRILLED", "TOTAL_DRILL"])
     lat_baseline = lat_baseline[lat_baseline["TOTAL_DRILL"] > 0]
     lat_baseline["slide_pct"] = (lat_baseline["SLIDE_DRILLED"] / lat_baseline["TOTAL_DRILL"]) * 100
