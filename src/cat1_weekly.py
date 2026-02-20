@@ -188,7 +188,7 @@ def section_c_reason_pooh(current_week, prev_week, config, report_type="wednesda
                 "total_filtered": 0,
                 "breakdown": pd.DataFrame(columns=["category", "count", "pct"]),
                 "raw_breakdown": pd.DataFrame(columns=["reason", "count"]),
-                "motor_by_operator": pd.DataFrame(columns=["OPERATOR", "motor_count", "total_count", "motor_pct"]),
+                "motor_detail": pd.DataFrame(columns=["operator", "hole_size", "sn", "reason"]),
             }
 
         # Filter to relevant sources
@@ -198,7 +198,7 @@ def section_c_reason_pooh(current_week, prev_week, config, report_type="wednesda
                 "total_filtered": 0,
                 "breakdown": pd.DataFrame(columns=["category", "count", "pct"]),
                 "raw_breakdown": pd.DataFrame(columns=["reason", "count"]),
-                "motor_by_operator": pd.DataFrame(columns=["OPERATOR", "motor_count", "total_count", "motor_pct"]),
+                "motor_detail": pd.DataFrame(columns=["operator", "hole_size", "sn", "reason"]),
             }
 
         # Classify each reason
@@ -223,22 +223,26 @@ def section_c_reason_pooh(current_week, prev_week, config, report_type="wednesda
         else:
             raw_counts = pd.DataFrame(columns=["reason", "count"])
 
-        # Motor issues by operator
-        motor_runs = filtered[filtered["pooh_category"] == "motor_issues"]
+        # Motor issues - individual run details
+        motor_runs = filtered[filtered["pooh_category"] == "motor"]
         if len(motor_runs) > 0:
-            op_totals = filtered.groupby("OPERATOR").size().reset_index(name="total_count")
-            op_motor = motor_runs.groupby("OPERATOR").size().reset_index(name="motor_count")
-            motor_by_op = op_totals.merge(op_motor, on="OPERATOR", how="inner")
-            motor_by_op["motor_pct"] = (motor_by_op["motor_count"] / motor_by_op["total_count"] * 100).round(1)
-            motor_by_op = motor_by_op.sort_values("motor_count", ascending=False)
+            motor_detail = []
+            for _, run in motor_runs.iterrows():
+                motor_detail.append({
+                    "operator": run.get("OPERATOR", "Unknown"),
+                    "hole_size": run.get("HOLE_SIZE", "N/A"),
+                    "sn": run.get("SN", "N/A"),
+                    "reason": run.get(reason_col, "N/A"),
+                })
+            motor_detail_df = pd.DataFrame(motor_detail)
         else:
-            motor_by_op = pd.DataFrame(columns=["OPERATOR", "motor_count", "total_count", "motor_pct"])
+            motor_detail_df = pd.DataFrame(columns=["operator", "hole_size", "sn", "reason"])
 
         return {
             "total_filtered": total,
             "breakdown": cat_counts,
             "raw_breakdown": raw_counts,
-            "motor_by_operator": motor_by_op,
+            "motor_detail": motor_detail_df,
         }
 
     current = _analyze_pooh(current_week)

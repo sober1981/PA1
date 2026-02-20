@@ -139,19 +139,23 @@ def print_cat1_section_c(section):
 
     print(f"\n  Filtered runs: {cur['total_filtered']} (current) | {prv['total_filtered']} (previous)")
 
+    # Display names for POOH categories
+    _pooh_labels = {"td": "TD", "rop": "ROP", "bit": "Bit", "motor": "Motor", "mwd": "MWD", "bha": "BHA", "pressure": "Pressure", "other": "Other", "unknown": "Unknown"}
+
     if len(cur["breakdown"]) > 0:
         print(f"\n  Category Breakdown (Current Week):")
         print(f"  {'Category':<18s} {'Count':>8s} {'%':>8s}")
         print(f"  {'-'*18} {'-'*8} {'-'*8}")
         for _, row in cur["breakdown"].iterrows():
-            print(f"  {str(row['category']):<18s} {row['count']:>8d} {row['pct']:>7.1f}%")
+            label = _pooh_labels.get(str(row['category']), str(row['category']))
+            print(f"  {label:<18s} {row['count']:>8d} {row['pct']:>7.1f}%")
 
-    if len(cur["motor_by_operator"]) > 0:
-        print(f"\n  Motor Issues by Operator (Current Week):")
-        print(f"  {'Operator':<30s} {'Motor':>8s} {'Total':>8s} {'%':>8s}")
-        print(f"  {'-'*30} {'-'*8} {'-'*8} {'-'*8}")
-        for _, row in cur["motor_by_operator"].iterrows():
-            print(f"  {str(row['OPERATOR'])[:30]:<30s} {int(row['motor_count']):>8d} {int(row['total_count']):>8d} {row['motor_pct']:>7.1f}%")
+    if len(cur["motor_detail"]) > 0:
+        print(f"\n  Motor Issues Detail (Current Week):")
+        print(f"  {'Operator':<30s} {'Hole':>8s} {'SN':<15s} {'Reason':<25s}")
+        print(f"  {'-'*30} {'-'*8} {'-'*15} {'-'*25}")
+        for _, row in cur["motor_detail"].iterrows():
+            print(f"  {str(row['operator'])[:30]:<30s} {_fmt_hole(row.get('hole_size')):>8s} {_safe_str(row.get('sn', 'N/A')):<15s} {_safe_str(row.get('reason', 'N/A'))[:25]:<25s}")
 
 
 def print_category1(cat1):
@@ -180,13 +184,13 @@ def print_cat2_section_a(section, cm_label, pm_label):
             print(f"\n  {label}: No data")
             continue
         print(f"\n  {label}:")
-        print(f"  {'#':>3s} {'Operator':<25s} {'Well':<30s} {'Footage':>10s} {'ROP':>8s} {'Hrs':>7s} {'Type':<8s} {'Hole':>6s}")
-        print(f"  {'-'*3} {'-'*25} {'-'*30} {'-'*10} {'-'*8} {'-'*7} {'-'*8} {'-'*6}")
+        print(f"  {'#':>3s} {'Operator':<25s} {'Well':<30s} {'Footage':>10s} {'ROP':>8s} {'Hrs':>7s} {'Type':<8s} {'Hole':>6s} {'Bend':>6s}")
+        print(f"  {'-'*3} {'-'*25} {'-'*30} {'-'*10} {'-'*8} {'-'*7} {'-'*8} {'-'*6} {'-'*6}")
         for _, run in df.iterrows():
             rop = f"{run['avg_rop']:.1f}" if pd.notna(run.get('avg_rop')) else "N/A"
             hrs = f"{run['drilling_hours']:.1f}" if pd.notna(run.get('drilling_hours')) else "N/A"
             print(f"  {run['rank']:>3d} {str(run['operator'])[:25]:<25s} {str(run['well'])[:30]:<30s} "
-                  f"{run['total_drill']:>10,.0f} {rop:>8s} {hrs:>7s} {_safe_str(run['motor_type2']):<8s} {_fmt_hole(run['hole_size']):>6s}")
+                  f"{run['total_drill']:>10,.0f} {rop:>8s} {hrs:>7s} {_safe_str(run['motor_type2']):<8s} {_fmt_hole(run['hole_size']):>6s} {_safe_str(run.get('bend_hsg', 'N/A')):>6s}")
 
 
 def print_cat2_section_b(section, cm_label, pm_label):
@@ -462,16 +466,129 @@ def print_category3(cat3):
 
 
 # =========================================================================
+# Category 4: QC Audit (Friday Only)
+# =========================================================================
+
+def print_cat4_section_a(section_a):
+    """4A: Column Change Summary."""
+    print()
+    print("-" * 80)
+    print("  4A. COLUMN CHANGE SUMMARY (Most Corrected Columns)")
+    print("-" * 80)
+
+    if len(section_a) == 0:
+        print("\n  No column changes detected.")
+        return
+
+    print(f"\n  {'Column':<30s} {'Changes':>10s} {'% of Rows':>10s}")
+    print(f"  {'-'*30} {'-'*10} {'-'*10}")
+    for _, row in section_a.head(20).iterrows():
+        print(f"  {str(row['column'])[:30]:<30s} {int(row['changes']):>10d} {row['pct']:>9.1f}%")
+
+
+def print_cat4_section_b(section_b):
+    """4B: QC Reviewer Workload."""
+    print()
+    print("-" * 80)
+    print("  4B. QC REVIEWER WORKLOAD (RHC vs YGG)")
+    print("-" * 80)
+
+    if len(section_b) == 0:
+        print("\n  No reviewer data available.")
+        return
+
+    print(f"\n  {'Reviewer':<15s} {'Rows':>8s} {'Changed':>10s} {'Cell Edits':>12s} {'Avg/Row':>10s}")
+    print(f"  {'-'*15} {'-'*8} {'-'*10} {'-'*12} {'-'*10}")
+    for _, row in section_b.iterrows():
+        print(f"  {str(row['reviewer']):<15s} {int(row['rows_assigned']):>8d} {int(row['rows_changed']):>10d} "
+              f"{int(row['cell_changes']):>12d} {row['avg_per_row']:>10.1f}")
+
+
+def print_cat4_section_c(section_c):
+    """4C: Operator QC Trends."""
+    print()
+    print("-" * 80)
+    print("  4C. OPERATOR QC TRENDS")
+    print("-" * 80)
+
+    if len(section_c) == 0:
+        print("\n  No operator QC data.")
+        return
+
+    print(f"\n  {'Operator':<30s} {'Rows':>6s} {'Changed':>9s} {'Edits':>8s} {'Top Columns':<40s}")
+    print(f"  {'-'*30} {'-'*6} {'-'*9} {'-'*8} {'-'*40}")
+    for _, row in section_c.iterrows():
+        if row['cell_changes'] > 0:
+            print(f"  {str(row['operator'])[:30]:<30s} {int(row['rows']):>6d} {int(row['changed_rows']):>9d} "
+                  f"{int(row['cell_changes']):>8d} {str(row['top_columns'])[:40]:<40s}")
+
+
+def print_cat4_section_d(section_d):
+    """4D: Auto-Detected Patterns."""
+    print()
+    print("-" * 80)
+    print("  4D. AUTO-DETECTED PATTERNS")
+    print("-" * 80)
+
+    systematic = section_d.get("systematic", [])
+    broken = section_d.get("broken_columns", [])
+    high_effort = section_d.get("high_effort_rows", [])
+    new_rows = section_d.get("new_rows", 0)
+    removed_rows = section_d.get("removed_rows", 0)
+
+    if new_rows > 0 or removed_rows > 0:
+        print(f"\n  Row Changes: {new_rows} new rows added | {removed_rows} rows removed during QC")
+
+    if broken:
+        print(f"\n  [!] COLUMNS NEEDING SOURCE FIX (>50% of rows corrected):")
+        for item in broken:
+            print(f"    {item['column']:<30s} {item['rows_changed']} rows changed ({item['pct']:.1f}%)")
+
+    if systematic:
+        print(f"\n  [!] SYSTEMATIC CORRECTIONS (same operator+column, 3+ times):")
+        for item in systematic:
+            print(f"    {item['operator'][:30]:<30s} | {item['column']:<25s} | {item['count']} corrections")
+
+    if high_effort:
+        print(f"\n  [*] HIGH-EFFORT QC ROWS (most cell changes):")
+        print(f"  {'Operator':<30s} {'Well':<30s} {'Changes':>10s} {'QC By':<10s}")
+        print(f"  {'-'*30} {'-'*30} {'-'*10} {'-'*10}")
+        for item in high_effort:
+            print(f"  {str(item['operator'])[:30]:<30s} {str(item['well'])[:30]:<30s} {item['changes']:>10d} {item['qc_by']:<10s}")
+
+    if not systematic and not broken and not high_effort and new_rows == 0 and removed_rows == 0:
+        print("\n  No significant patterns detected.")
+
+
+def print_category4(cat4):
+    """Print Category 4: QC Audit (Friday only)."""
+    if cat4 is None:
+        return
+    print_category_header(4, "QC AUDIT (Wed vs Fri Comparison)")
+
+    meta = cat4["meta"]
+    print(f"\n  Wednesday rows: {meta['wed_rows']} | Friday rows: {meta['fri_rows']} | Matched: {meta['matched']}")
+    print(f"  Total cell changes: {meta['total_changes']} across {meta['columns_compared']} columns compared")
+
+    sections = cat4["sections"]
+    print_cat4_section_a(sections["A_column_summary"])
+    print_cat4_section_b(sections["B_reviewer_workload"])
+    print_cat4_section_c(sections["C_operator_trends"])
+    print_cat4_section_d(sections["D_patterns"])
+
+
+# =========================================================================
 # Main entry point
 # =========================================================================
 
 def generate_report(all_results):
-    """Generate the full console report with all 3 categories."""
+    """Generate the full console report."""
     meta = all_results["meta"]
     print_header(meta)
 
     print_category1(all_results.get("category1"))
     print_category2(all_results.get("category2"))
     print_category3(all_results.get("category3"))
+    print_category4(all_results.get("category4"))
 
     print_footer()

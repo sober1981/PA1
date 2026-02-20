@@ -73,11 +73,13 @@ category1:
     wednesday_col: "REASON_POOH"
     friday_col: "REASON_POOH_QC"
     classifications:
-      success: ["TD", "SECTION TD", "WELL TD"]
-      motor_issues: ["MOTOR", "MOTOR FAILURE", "MOTOR CHUNKED"]
-      performance: ["ROP", "BUILD RATES"]
-      equipment: ["BHA", "MWD", "MWD FAILURE", "BIT", "RSS", "WASH OUT",
-                   "TWIST OFF", "PLUGGED STRING", "STALLS"]
+      td: ["TD", "SECTION TD", "WELL TD"]
+      rop: ["ROP", "BUILD RATES"]
+      bit: ["BIT"]
+      motor: ["MOTOR", "MOTOR FAILURE", "MOTOR CHUNKED"]
+      mwd: ["MWD", "MWD FAILURE"]
+      bha: ["BHA"]
+      pressure: ["PRESSURE"]
       # Everything else falls into "other"
 
 # ============================================================================
@@ -137,6 +139,21 @@ kpis:
       - ["BASIN", "HOLE_SIZE"]
       - ["BASIN", "MOTOR_MODEL"]
       - ["BASIN"]
+
+# ============================================================================
+# Category 4: QC Audit (Friday Report Only)
+# ============================================================================
+category4:
+  enabled: true
+  # Composite key for matching rows between Wed and Fri files
+  match_keys: ["OPERATOR", "WELL", "SN", "DEPTH_IN"]
+  # Columns to exclude from diff (keys, expected diffs, metadata)
+  exclude_from_diff: ["OPERATOR", "WELL", "SN", "DEPTH_IN", "DEPTH_OUT",
+                       "REASON_POOH_QC", "QC BY", "QC_FLAG"]
+  # QC reviewer column
+  qc_by_col: "QC BY"
+  # Tolerance for float comparison (differences below this are ignored)
+  float_tolerance: 0.01
 
 comparison:
   min_sample_size: 10

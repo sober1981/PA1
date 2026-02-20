@@ -259,6 +259,9 @@ def _render_cat1_pooh(pdf, section):
     pdf.body_text(f"Filtered runs: {cur['total_filtered']} (current) | {prv['total_filtered']} (previous)")
     pdf.ln(2)
 
+    # Display names for POOH categories
+    _pooh_labels = {"td": "TD", "rop": "ROP", "bit": "Bit", "motor": "Motor", "mwd": "MWD", "bha": "BHA", "pressure": "Pressure", "other": "Other", "unknown": "Unknown"}
+
     # Category breakdown
     if len(cur["breakdown"]) > 0:
         cols = [50, 25, 25]
@@ -266,28 +269,30 @@ def _render_cat1_pooh(pdf, section):
         alt = False
         for _, row in cur["breakdown"].iterrows():
             _table_row_color(pdf, alt)
-            pdf.cell(cols[0], 5, f"  {_latin1(str(row['category']))}", fill=True)
+            label = _pooh_labels.get(str(row['category']), str(row['category']))
+            pdf.cell(cols[0], 5, f"  {_latin1(label)}", fill=True)
             pdf.cell(cols[1], 5, f"{row['count']}", align="C", fill=True)
             pdf.cell(cols[2], 5, f"{row['pct']:.1f}%", align="C", fill=True)
             pdf.ln()
             alt = not alt
         pdf.ln(3)
 
-    # Motor issues by operator
-    motor_ops = cur["motor_by_operator"]
-    if len(motor_ops) > 0:
-        pdf.sub_title("Motor Issues by Operator (Current Week)")
-        mcols = [60, 25, 25, 25]
-        _table_header(pdf, mcols, ["Operator", "Motor Issues", "Total Runs", "Motor %"], bg_color=(180, 50, 30))
+    # Motor issues detail
+    motor_detail = cur["motor_detail"]
+    if len(motor_detail) > 0:
+        pdf.sub_title("Motor Issues Detail (Current Week)")
+        mcols = [55, 20, 30, 45]
+        _table_header(pdf, mcols, ["Operator", "Hole", "SN", "Reason"], bg_color=(180, 50, 30))
         alt = False
-        for _, row in motor_ops.head(10).iterrows():
+        for _, row in motor_detail.iterrows():
+            pdf.check_space(8)
             _table_row_color(pdf, alt, flagged=True, flag_color=(255, 245, 243))
-            pdf.cell(mcols[0], 5, f"  {_latin1(str(row['OPERATOR']))[:35]}", fill=True)
+            pdf.cell(mcols[0], 5, f"  {_latin1(str(row['operator']))[:30]}", fill=True)
+            pdf.cell(mcols[1], 5, _fmt_hole(row.get('hole_size')), align="C", fill=True)
+            pdf.cell(mcols[2], 5, f"{_safe(row.get('sn', 'N/A'))[:18]}", align="C", fill=True)
             pdf.set_text_color(180, 40, 20)
-            pdf.cell(mcols[1], 5, f"{int(row['motor_count'])}", align="C", fill=True)
+            pdf.cell(mcols[3], 5, f"  {_latin1(str(row.get('reason', 'N/A')))[:28]}", fill=True)
             pdf.set_text_color(60, 60, 60)
-            pdf.cell(mcols[2], 5, f"{int(row['total_count'])}", align="C", fill=True)
-            pdf.cell(mcols[3], 5, f"{row['motor_pct']:.1f}%", align="C", fill=True)
             pdf.ln()
             alt = not alt
     pdf.ln(4)
@@ -308,16 +313,16 @@ def _render_cat2_longest_runs(pdf, section, cm_label, pm_label):
             continue
 
         pdf.sub_title(label)
-        cols = [8, 42, 50, 26, 20, 18, 22, 16, 24]
-        headers = ["#", "Operator", "Well", "Footage", "ROP", "Hrs", "Type", "Hole", "Basin"]
+        cols = [8, 40, 46, 24, 18, 16, 20, 14, 16, 22]
+        headers = ["#", "Operator", "Well", "Footage", "ROP", "Hrs", "Type", "Hole", "Bend", "Basin"]
         _table_header(pdf, cols, headers)
         alt = False
         for _, run in df.iterrows():
             pdf.check_space(8)
             _table_row_color(pdf, alt)
             pdf.cell(cols[0], 5, f"{int(run['rank'])}", align="C", fill=True)
-            pdf.cell(cols[1], 5, f"  {_latin1(str(run['operator']))[:25]}", fill=True)
-            pdf.cell(cols[2], 5, f"  {_latin1(str(run['well']))[:30]}", fill=True)
+            pdf.cell(cols[1], 5, f"  {_latin1(str(run['operator']))[:23]}", fill=True)
+            pdf.cell(cols[2], 5, f"  {_latin1(str(run['well']))[:27]}", fill=True)
             pdf.set_font("Helvetica", "B", 7)
             pdf.cell(cols[3], 5, f"{run['total_drill']:,.0f}", align="C", fill=True)
             pdf.set_font("Helvetica", "", 7)
@@ -327,7 +332,8 @@ def _render_cat2_longest_runs(pdf, section, cm_label, pm_label):
             pdf.cell(cols[5], 5, hrs, align="C", fill=True)
             pdf.cell(cols[6], 5, _safe(run.get('motor_type2'))[:12], align="C", fill=True)
             pdf.cell(cols[7], 5, _fmt_hole(run.get('hole_size')), align="C", fill=True)
-            pdf.cell(cols[8], 5, _safe(run.get('basin'))[:14], align="C", fill=True)
+            pdf.cell(cols[8], 5, _safe(run.get('bend_hsg', 'N/A'))[:10], align="C", fill=True)
+            pdf.cell(cols[9], 5, _safe(run.get('basin'))[:12], align="C", fill=True)
             pdf.ln()
             alt = not alt
         pdf.ln(3)
@@ -741,6 +747,147 @@ def _render_cat3_patterns(pdf, patterns):
 
 
 # =========================================================================
+# Category 4 rendering (QC Audit — Friday only)
+# =========================================================================
+
+def _render_cat4_column_summary(pdf, section_a):
+    """4A: Column Change Summary."""
+    pdf.section_title("4A. Column Change Summary (Most Corrected Columns)")
+    if len(section_a) == 0:
+        pdf.body_text("No column changes detected.")
+        return
+
+    cols = [80, 30, 30]
+    _table_header(pdf, cols, ["Column", "Changes", "% of Rows"])
+    alt = False
+    for _, row in section_a.head(20).iterrows():
+        pdf.check_space(7)
+        _table_row_color(pdf, alt)
+        pdf.cell(cols[0], 5, f"  {_latin1(str(row['column']))[:45]}", fill=True)
+        pdf.cell(cols[1], 5, f"{int(row['changes'])}", align="C", fill=True)
+        pdf.cell(cols[2], 5, f"{row['pct']:.1f}%", align="C", fill=True)
+        pdf.ln()
+        alt = not alt
+    pdf.ln(4)
+
+
+def _render_cat4_reviewer_workload(pdf, section_b):
+    """4B: QC Reviewer Workload."""
+    pdf.check_space(30)
+    pdf.section_title("4B. QC Reviewer Workload (RHC vs YGG)")
+    if len(section_b) == 0:
+        pdf.body_text("No reviewer data available.")
+        return
+
+    cols = [35, 25, 25, 30, 25]
+    _table_header(pdf, cols, ["Reviewer", "Rows", "Changed", "Cell Edits", "Avg/Row"])
+    alt = False
+    for _, row in section_b.iterrows():
+        _table_row_color(pdf, alt)
+        pdf.cell(cols[0], 5, f"  {_latin1(str(row['reviewer']))}", fill=True)
+        pdf.cell(cols[1], 5, f"{int(row['rows_assigned'])}", align="C", fill=True)
+        pdf.cell(cols[2], 5, f"{int(row['rows_changed'])}", align="C", fill=True)
+        pdf.set_font("Helvetica", "B", 7)
+        pdf.cell(cols[3], 5, f"{int(row['cell_changes'])}", align="C", fill=True)
+        pdf.set_font("Helvetica", "", 7)
+        pdf.cell(cols[4], 5, f"{row['avg_per_row']:.1f}", align="C", fill=True)
+        pdf.ln()
+        alt = not alt
+    pdf.ln(4)
+
+
+def _render_cat4_operator_trends(pdf, section_c):
+    """4C: Operator QC Trends."""
+    pdf.check_space(30)
+    pdf.section_title("4C. Operator QC Trends")
+
+    # Only show operators with changes
+    has_changes = section_c[section_c["cell_changes"] > 0] if len(section_c) > 0 else section_c
+    if len(has_changes) == 0:
+        pdf.body_text("No operator corrections detected.")
+        return
+
+    cols = [50, 18, 22, 22, 60]
+    _table_header(pdf, cols, ["Operator", "Rows", "Changed", "Edits", "Top Columns"])
+    alt = False
+    for _, row in has_changes.head(15).iterrows():
+        pdf.check_space(7)
+        _table_row_color(pdf, alt)
+        pdf.cell(cols[0], 5, f"  {_latin1(str(row['operator']))[:28]}", fill=True)
+        pdf.cell(cols[1], 5, f"{int(row['rows'])}", align="C", fill=True)
+        pdf.cell(cols[2], 5, f"{int(row['changed_rows'])}", align="C", fill=True)
+        pdf.cell(cols[3], 5, f"{int(row['cell_changes'])}", align="C", fill=True)
+        pdf.set_font("Helvetica", "I", 6)
+        pdf.cell(cols[4], 5, f"  {_latin1(str(row['top_columns']))[:38]}", fill=True)
+        pdf.set_font("Helvetica", "", 7)
+        pdf.ln()
+        alt = not alt
+    pdf.ln(4)
+
+
+def _render_cat4_patterns(pdf, section_d):
+    """4D: Auto-Detected Patterns."""
+    pdf.check_space(30)
+    pdf.section_title("4D. Auto-Detected Patterns")
+
+    new_rows = section_d.get("new_rows", 0)
+    removed_rows = section_d.get("removed_rows", 0)
+    if new_rows > 0 or removed_rows > 0:
+        pdf.body_text(f"Row changes: {new_rows} new rows added, {removed_rows} rows removed during QC")
+        pdf.ln(2)
+
+    broken = section_d.get("broken_columns", [])
+    if broken:
+        pdf.sub_title("Columns Needing Source Fix (>50% corrected)")
+        for item in broken:
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_text_color(200, 40, 20)
+            pdf.cell(0, 5, f"  {_latin1(item['column'])}  —  {item['rows_changed']} rows ({item['pct']:.1f}%)", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_font("Helvetica", "", 7)
+            pdf.set_text_color(60, 60, 60)
+        pdf.ln(3)
+
+    systematic = section_d.get("systematic", [])
+    if systematic:
+        pdf.sub_title("Systematic Corrections (same operator+column, 3+ times)")
+        scols = [60, 50, 25]
+        _table_header(pdf, scols, ["Operator", "Column", "Count"], bg_color=(180, 50, 30))
+        alt = False
+        for item in systematic[:10]:
+            _table_row_color(pdf, alt, flagged=True, flag_color=(255, 245, 243))
+            pdf.cell(scols[0], 5, f"  {_latin1(str(item['operator']))[:35]}", fill=True)
+            pdf.cell(scols[1], 5, f"  {_latin1(str(item['column']))[:30]}", fill=True)
+            pdf.set_text_color(180, 40, 20)
+            pdf.cell(scols[2], 5, f"{item['count']}", align="C", fill=True)
+            pdf.set_text_color(60, 60, 60)
+            pdf.ln()
+            alt = not alt
+        pdf.ln(3)
+
+    high_effort = section_d.get("high_effort_rows", [])
+    if high_effort:
+        pdf.sub_title("High-Effort QC Rows (most cell changes)")
+        hcols = [55, 55, 25, 20]
+        _table_header(pdf, hcols, ["Operator", "Well", "Changes", "QC By"])
+        alt = False
+        for item in high_effort:
+            _table_row_color(pdf, alt)
+            pdf.cell(hcols[0], 5, f"  {_latin1(str(item['operator']))[:30]}", fill=True)
+            pdf.cell(hcols[1], 5, f"  {_latin1(str(item['well']))[:30]}", fill=True)
+            pdf.set_font("Helvetica", "B", 7)
+            pdf.cell(hcols[2], 5, f"{item['changes']}", align="C", fill=True)
+            pdf.set_font("Helvetica", "", 7)
+            pdf.cell(hcols[3], 5, f"{_latin1(str(item['qc_by']))}", align="C", fill=True)
+            pdf.ln()
+            alt = not alt
+        pdf.ln(3)
+
+    if not broken and not systematic and not high_effort and new_rows == 0 and removed_rows == 0:
+        pdf.body_text("No significant patterns detected.")
+    pdf.ln(4)
+
+
+# =========================================================================
 # Main entry point
 # =========================================================================
 
@@ -833,6 +980,23 @@ def generate_pdf(all_results, output_dir=None, report_title=None):
         _render_cat3_longest_runs(pdf, sections.get("B_longest_runs"))
         _render_cat3_sliding_pct(pdf, sections.get("C_sliding_pct"))
         _render_cat3_patterns(pdf, sections.get("D_pattern_highlights"))
+
+    # =====================================================================
+    # CATEGORY 4: QC Audit (Friday only)
+    # =====================================================================
+    cat4 = all_results.get("category4")
+    if cat4:
+        pdf.add_page()
+        pdf.category_header(4, "QC AUDIT (Wed vs Fri Comparison)")
+        meta4 = cat4["meta"]
+        pdf.body_text(f"Wednesday rows: {meta4['wed_rows']} | Friday rows: {meta4['fri_rows']} | Matched: {meta4['matched']}")
+        pdf.body_text(f"Total cell changes: {meta4['total_changes']} across {meta4['columns_compared']} columns compared")
+        pdf.ln(3)
+        sections = cat4["sections"]
+        _render_cat4_column_summary(pdf, sections["A_column_summary"])
+        _render_cat4_reviewer_workload(pdf, sections["B_reviewer_workload"])
+        _render_cat4_operator_trends(pdf, sections["C_operator_trends"])
+        _render_cat4_patterns(pdf, sections["D_patterns"])
 
     # =====================================================================
     # SAVE PDF

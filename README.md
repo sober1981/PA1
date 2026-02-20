@@ -1,6 +1,6 @@
 # PA1 - Performance Analysis 1
 
-Weekly drilling run analysis tool for Scout Downhole. Reads the master Excel file, identifies the latest week's runs, and generates automated performance reports organized into 3 analysis categories.
+Weekly drilling run analysis tool for Scout Downhole. Reads the master Excel file, identifies the latest week's runs, and generates automated performance reports organized into 4 analysis categories.
 
 ## How It Works
 
@@ -16,21 +16,21 @@ python run_agent.py --file path/to/master.xlsx         # Custom file
 
 Add `--no-email` to any command to skip emailing and just generate console + PDF output.
 
-## Report Structure (v2)
+## Report Structure (v2.1)
 
-The report is organized into 3 categories:
+The report is organized into 4 categories:
 
 ### Category 1: Week vs Previous Week
 | Section | Description |
 |---------|-------------|
 | **A - Weekly Summary** | Run count, total footage, total hours by JOB_TYPE and MOTOR_TYPE2. Current vs previous week with deltas. |
 | **B - Curves Analysis** | 1-run curves (best outcome) vs multi-run curves. Flags operators. SOURCE = Motor_KPI only. |
-| **C - Reason to POOH** | Breakdown by classification (Success, Motor Issues, Performance, Equipment, Other). Wednesday uses REASON_POOH, Friday uses REASON_POOH_QC. |
+| **C - Reason to POOH** | Breakdown by classification (TD, ROP, Bit, Motor, MWD, BHA, Pressure, Other). Motor detail shows Operator, Hole Size, and SN. Wednesday uses REASON_POOH, Friday uses REASON_POOH_QC. |
 
 ### Category 2: Monthly Highlights
 | Section | Description |
 |---------|-------------|
-| **A - Longest Runs** | Top 5 by TOTAL_DRILL, current + previous month, showing MOTOR_TYPE2. |
+| **A - Longest Runs** | Top 5 by TOTAL_DRILL, current + previous month, showing MOTOR_TYPE2 and BEND_HSG. |
 | **B - Monthly Summary** | Same grouping as Cat1-A but monthly, current vs previous month. |
 | **C - Fastest Sections** | Highest AVG_ROP by operator within same HOLE_SIZE (current month). |
 | **D - Operator Success Rate** | (TD runs / total runs) per operator. |
@@ -45,6 +45,16 @@ The report is organized into 3 categories:
 | **C - Sliding %** | SLIDE_DRILLED / TOTAL_DRILL for LAT phase only. |
 | **D - Pattern Highlights** | Cross-variable-group highlights and lowlights with operator attribution. |
 
+### Category 4: QC Audit (Friday Only)
+Compares Wednesday (pre-QC) and Friday (post-QC) files cell by cell.
+
+| Section | Description |
+|---------|-------------|
+| **A - Column Change Summary** | Which columns were corrected most often during QC. Identifies data source issues. |
+| **B - QC Reviewer Workload** | RHC vs YGG: rows assigned, rows changed, total cell edits, average edits per row. |
+| **C - Operator QC Trends** | Per operator: how many rows changed, cell edit count, and top corrected columns. |
+| **D - Auto-Detected Patterns** | Systematic corrections (same operator+column repeated), broken columns (>50% corrected), high-effort QC rows, new/removed rows. |
+
 ## Wednesday / Friday Workflow
 
 PA1 generates two reports per week, emailed to jsoberanes@scoutdownhole.com via Outlook:
@@ -53,12 +63,14 @@ PA1 generates two reports per week, emailed to jsoberanes@scoutdownhole.com via 
 - **Trigger**: Manual
 - **File selection**: Interactive -- PA1 lists available master files, you pick the one you just uploaded (local folder)
 - **Data**: Raw, not yet QC'd
-- **State**: Saves the selected filename to `state/last_run.json` for Friday reuse
+- **Categories**: 1-3 only (no QC Audit)
+- **State**: Saves the selected filename + path to `state/last_run.json` for Friday reuse
 
 ### Friday - "QC'd Report"
 - **Trigger**: Automatic -- Windows Task Scheduler, every Friday at 10:00 AM
 - **File selection**: Auto -- reads Wednesday's filename from state, finds the same file in the Teams sync folder (QC'd version)
 - **Data**: Same file as Wednesday, now QC'd by the team
+- **Categories**: All 4 (includes QC Audit comparing Wed vs Fri)
 
 ### Key Concept
 Same filename, different location. Wednesday = local copy (pre-QC). Friday = Teams sync copy (post-QC).
@@ -70,7 +82,7 @@ Same filename, different location. Wednesday = local copy (pre-QC). Friday = Tea
 | Mon-Sun | Drilling runs occur | -- |
 | Wednesday | New week uploaded to SharePoint | User triggers Wed report (manual, interactive file pick) |
 | Wed-Fri | Team QCs the data in Teams | -- |
-| Friday 10 AM | QC complete | Fri report auto-generated from Teams sync + emailed |
+| Friday 10 AM | QC complete | Fri report auto-generated from Teams sync + emailed (with QC Audit) |
 
 ## Data Rules
 
@@ -97,11 +109,14 @@ Comparisons use 5 variable groups with a **multi-level fallback chain** -- start
 
 | Classification | REASON_POOH Values |
 |---------------|-------------------|
-| **Success** | TD, Section TD, Well TD |
-| **Motor Issues** | Motor, Motor Failure, Motor chunked |
-| **Performance** | ROP, Build Rates |
-| **Equipment** | BHA, MWD, MWD Failure, BIT, RSS, Wash Out, Twist off, Plugged String |
-| **Other** | No Info, Hole problems, Pressure, Stuck Pipe, etc. |
+| **TD** | TD, Section TD, Well TD |
+| **ROP** | ROP, Build Rates |
+| **Bit** | BIT |
+| **Motor** | Motor, Motor Failure, Motor chunked |
+| **MWD** | MWD, MWD Failure |
+| **BHA** | BHA |
+| **Pressure** | Pressure |
+| **Other** | No Info, Hole problems, Stuck Pipe, etc. |
 
 ## Project Structure
 
@@ -117,10 +132,11 @@ scorecard-pa/
 │   ├── cat1_weekly.py        # Category 1: Week vs Previous Week (3 sections)
 │   ├── cat2_monthly.py       # Category 2: Monthly Highlights (6 sections)
 │   ├── kpi_engine.py         # Category 3: Historical KPIs + pattern highlights
+│   ├── qc_audit.py           # Category 4: QC Audit — Wed vs Fri diff engine (Friday only)
 │   ├── comparator.py         # Multi-level fallback baseline comparison
 │   ├── state.py              # Wednesday/Friday state management (last_run.json)
-│   ├── report.py             # Console output (all 3 categories)
-│   ├── pdf_report.py         # PDF report (all 3 categories, fpdf2)
+│   ├── report.py             # Console output (all 4 categories)
+│   ├── pdf_report.py         # PDF report (all 4 categories, fpdf2)
 │   └── emailer.py            # Outlook COM auto-send with PDF attachment
 ├── state/                    # Runtime state (auto-generated, git-ignored)
 │   └── last_run.json
@@ -149,6 +165,7 @@ scorecard-pa/
     - run_category1(current_week, prev_week, config, report_type)
     - run_category2(current_month, prev_month, config, report_type)
     - run_category3(current_week, baseline, config)
+    - run_qc_audit(wed_df, fri_df, config, week_start, week_end)  ← Friday only
 [6] Generate reports (console + PDF)
 [7] Email via Outlook (unless --no-email)
 [8] Save state (Wednesday only)
@@ -183,6 +200,7 @@ scorecard-pa/
 ## Roadmap
 
 - [ ] Friday executive summary PDF (concise, management-ready)
+- [ ] QC Audit historical trends (track QC workload week over week)
 - [ ] More KPIs: rotate ROP, drilling hours efficiency, depth interval analysis
 - [ ] Motor yield reference file integration
 - [ ] Claude API integration for natural language insights

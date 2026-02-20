@@ -47,6 +47,7 @@ def section_a_longest_runs(current_month, prev_month, config):
                 "basin": run.get("BASIN", "N/A"),
                 "hole_size": run.get("HOLE_SIZE", "N/A"),
                 "phase": run.get("Phase_CALC", "N/A"),
+                "bend_hsg": run.get("BEND_HSG", "N/A"),
             })
         return pd.DataFrame(result)
 

@@ -27,6 +27,7 @@ from src.data_loader import (
 from src.cat1_weekly import run_category1
 from src.cat2_monthly import run_category2
 from src.kpi_engine import run_category3
+from src.qc_audit import run_qc_audit
 from src.report import generate_report
 from src.pdf_report import generate_pdf
 from src.emailer import send_report_email
@@ -81,12 +82,15 @@ def main():
     # [2/8] Locate master file
     # =========================================================================
     print("\n[2/8] Locating master file...")
+    wednesday_filepath = None  # For QC audit state tracking
+    wed_pre_qc_path = None     # Wednesday pre-QC file for Friday QC audit
     if args.file:
         # Explicit file path provided
         if not os.path.exists(args.file):
             print(f"  ERROR: File not found: {args.file}")
             sys.exit(1)
         print(f"  Using specified file: {args.file}")
+        wednesday_filepath = os.path.abspath(args.file)
         read_path = _copy_to_temp(args.file)
         original_filename = os.path.basename(args.file)
 
@@ -94,13 +98,16 @@ def main():
         # Wednesday: interactive file selection
         print("  Wednesday report -- interactive file selection")
         local_path, original_filename = find_master_file_interactive(config)
+        wednesday_filepath = local_path  # Save original path for Friday QC audit
         read_path = _copy_to_temp(local_path)
 
     elif report_type == "friday":
         # Friday: auto-find the QC'd version of Wednesday's file in Teams sync
         wed_state = load_wednesday_state()
+        wed_pre_qc_path = None  # For QC audit
         if wed_state:
             target = wed_state["wednesday_filename"]
+            wed_pre_qc_path = wed_state.get("wednesday_filepath")
             print(f"  Friday report -- looking for QC'd version of: {target}")
             teams_path = find_file_by_name(config, target)
             if teams_path:
@@ -146,7 +153,7 @@ def main():
 
     # Save state for Wednesday runs (so Friday can find the same file)
     if report_type == "wednesday" and args.report:
-        save_wednesday_state(original_filename, week, week_start, week_end)
+        save_wednesday_state(original_filename, week, week_start, week_end, filepath=wednesday_filepath)
 
     # =========================================================================
     # [5/8] Load time-period data slices
@@ -179,10 +186,32 @@ def main():
     print("  Category 3: Historical Analysis...")
     cat3_results = run_category3(new_runs, baseline_df, config)
 
+    # Category 4: QC Audit (Friday only — compare Wed pre-QC vs Fri post-QC)
+    cat4_results = None
+    if report_type == "friday" and wed_pre_qc_path and os.path.exists(wed_pre_qc_path):
+        print("  Category 4: QC Audit (comparing Wed vs Fri)...")
+        try:
+            wed_raw_path = _copy_to_temp(wed_pre_qc_path)
+            import pandas as pd
+            wed_raw_df = pd.read_excel(wed_raw_path, sheet_name=config.get("data", {}).get("sheet_name", "Sheet1"))
+            # Friday df is already loaded as 'df' (cleaned)
+            # Load Wednesday raw too and apply same basic cleaning for comparable dtypes
+            wed_clean = load_and_clean(wed_raw_path, config)
+            cat4_results = run_qc_audit(wed_clean, df, config, week_start, week_end)
+            if cat4_results:
+                meta = cat4_results["meta"]
+                print(f"    Matched rows: {meta['matched']} | Changes: {meta['total_changes']} | New: {meta['new_in_fri']} | Removed: {meta['removed_from_wed']}")
+        except Exception as e:
+            print(f"  WARNING: QC Audit failed: {e}")
+            cat4_results = None
+    elif report_type == "friday":
+        print("  Category 4: QC Audit skipped (no Wednesday file path in state)")
+
     all_results = {
         "category1": cat1_results,
         "category2": cat2_results,
         "category3": cat3_results,
+        "category4": cat4_results,
         "meta": {
             "week": week,
             "week_start": week_start,
