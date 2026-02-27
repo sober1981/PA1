@@ -13,6 +13,7 @@ import argparse
 import sys
 import os
 import platform
+import traceback
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -276,5 +277,38 @@ def main():
             pass
 
 
+def _send_failure_email(error_msg):
+    """Send a failure notification email when the report cannot be generated."""
+    try:
+        from src.emailer import send_report_email
+        from datetime import datetime
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        subject = f"PA1 - REPORT FAILED ({now})"
+        body = (
+            f"PA1 failed to generate the scheduled report.\n\n"
+            f"Time: {now}\n"
+            f"Error:\n{error_msg}\n\n"
+            f"Action needed: Check the issue and re-run manually if necessary.\n"
+            f"  python run_agent.py --report friday --no-email\n\n"
+            f"-- PA1"
+        )
+        send_report_email(
+            subject=subject,
+            body_text=body,
+            pdf_paths=[],
+            recipient="jsoberanes@scoutdownhole.com",
+        )
+    except Exception as email_err:
+        print(f"  CRITICAL: Could not send failure email: {email_err}")
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        error_msg = traceback.format_exc()
+        print(f"\n  FATAL ERROR:\n{error_msg}")
+        # Only send failure email for scheduled reports (--report flag)
+        if "--report" in sys.argv:
+            _send_failure_email(error_msg)
+        sys.exit(1)

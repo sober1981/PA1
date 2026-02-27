@@ -16,7 +16,7 @@ python run_agent.py --file path/to/master.xlsx         # Custom file
 
 Add `--no-email` to any command to skip emailing and just generate console + PDF output.
 
-## Report Structure (v2.1)
+## Report Structure (v2.2)
 
 The report is organized into 4 categories:
 
@@ -71,6 +71,7 @@ PA1 generates two reports per week, emailed to jsoberanes@scoutdownhole.com via 
 - **File selection**: Auto -- reads Wednesday's filename from state, finds the same file in the Teams sync folder (QC'd version)
 - **Data**: Same file as Wednesday, now QC'd by the team
 - **Categories**: All 4 (includes QC Audit comparing Wed vs Fri)
+- **Failure notification**: If the report fails for any reason, a failure email is sent with the error details instead. You always get an email on Friday (requires Outlook open + active session).
 
 ### Key Concept
 Same filename, different location. Wednesday = local copy (pre-QC). Friday = Teams sync copy (post-QC).
@@ -82,7 +83,7 @@ Same filename, different location. Wednesday = local copy (pre-QC). Friday = Tea
 | Mon-Sun | Drilling runs occur | -- |
 | Wednesday | New week uploaded to SharePoint | User triggers Wed report (manual, interactive file pick) |
 | Wed-Fri | Team QCs the data in Teams | -- |
-| Friday 10 AM | QC complete | Fri report auto-generated from Teams sync + emailed (with QC Audit) |
+| Friday 10 AM | QC complete | Fri report auto-generated from Teams sync + emailed (with QC Audit). On failure, error email sent instead. |
 
 ## Data Rules
 
@@ -123,7 +124,7 @@ Comparisons use 5 variable groups with a **multi-level fallback chain** -- start
 ```
 scorecard-pa/
 ├── run_agent.py              # CLI entry point (--report wednesday/friday/--week/--date-range)
-├── run_friday.bat            # Batch script for Windows Task Scheduler (Fri 10 AM)
+├── run_friday.bat            # Batch script for Task Scheduler (Fri 10 AM, with failure email fallback)
 ├── config/
 │   └── settings.yaml         # Configuration (paths, thresholds, variable groups, POOH classes)
 ├── src/
@@ -199,6 +200,8 @@ scorecard-pa/
 
 ## Roadmap
 
+- [x] Failure notification emails (v2.2 -- always get an email on Friday)
+- [ ] Force Friday to use same week as Wednesday (prevent week drift from extra rows)
 - [ ] Friday executive summary PDF (concise, management-ready)
 - [ ] QC Audit historical trends (track QC workload week over week)
 - [ ] More KPIs: rotate ROP, drilling hours efficiency, depth interval analysis
