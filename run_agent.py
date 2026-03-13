@@ -96,9 +96,25 @@ def main():
         original_filename = os.path.basename(args.file)
 
     elif report_type == "wednesday":
-        # Wednesday: interactive file selection
-        print("  Wednesday report -- interactive file selection")
-        local_path, original_filename = find_master_file_interactive(config)
+        # Check if Wednesday report was already generated today (scheduled safety net)
+        if args.report:  # Only check for scheduled runs, not ad-hoc
+            wed_state = load_wednesday_state()
+            if wed_state and wed_state.get("saved_at", ""):
+                from datetime import date
+                saved_date = wed_state["saved_at"][:10]  # "YYYY-MM-DD"
+                if saved_date == date.today().isoformat():
+                    print("  Wednesday report already generated today. Skipping.")
+                    sys.exit(0)
+
+        # Interactive if stdin is a terminal, otherwise auto-detect
+        if sys.stdin.isatty():
+            print("  Wednesday report -- interactive file selection")
+            local_path, original_filename = find_master_file_interactive(config)
+        else:
+            print("  Wednesday report -- auto-detecting latest master file")
+            read_path, original_filename = find_master_file(config)
+            local_path = read_path  # For state tracking
+
         wednesday_filepath = local_path  # Save original path for Friday QC audit
         read_path = _copy_to_temp(local_path)
 
@@ -108,7 +124,7 @@ def main():
         wed_pre_qc_path = None  # For QC audit
         if wed_state:
             target = wed_state["wednesday_filename"]
-            wed_pre_qc_path = wed_state.get("wednesday_filepath")
+            wed_pre_qc_path = wed_state.get("wednesday_snapshot") or wed_state.get("wednesday_filepath")
             print(f"  Friday report -- looking for QC'd version of: {target}")
             teams_path = find_file_by_name(config, target)
             if teams_path:
