@@ -37,7 +37,7 @@ def _group_summary(df, config):
     return grouped
 
 
-def section_a_weekly_summary(current_week, prev_week, config):
+def section_a_weekly_summary(current_week, prev_week, config, week=None):
     """
     Section A: Weekly Summary
     Total runs, TOTAL_DRILL, Total Hrs (C+D) grouped by JOB_TYPE then MOTOR_TYPE2.
@@ -68,12 +68,21 @@ def section_a_weekly_summary(current_week, prev_week, config):
         "total_hrs": round(current_totals["total_hrs"] - previous_totals["total_hrs"], 1),
     }
 
+    # Per-hole-size KPI breakdown (Summary / Detailed / Longest Run tables in PDF)
+    try:
+        from src.weekly_kpi import compute_weekly_kpi
+        kpi = compute_weekly_kpi(current_week, prev_week, week=week)
+    except Exception as e:
+        print(f"  WARNING: weekly KPI computation failed: {e}")
+        kpi = None
+
     return {
         "current": current,
         "previous": previous,
         "current_totals": current_totals,
         "previous_totals": previous_totals,
         "delta_totals": delta_totals,
+        "kpi": kpi,
     }
 
 
@@ -255,7 +264,7 @@ def section_c_reason_pooh(current_week, prev_week, config, report_type="wednesda
     }
 
 
-def run_category1(current_week, prev_week, config, report_type="wednesday"):
+def run_category1(current_week, prev_week, config, report_type="wednesday", week=None):
     """Run all Category 1 analyses."""
     if not config.get("category1", {}).get("enabled", True):
         return None
@@ -263,7 +272,7 @@ def run_category1(current_week, prev_week, config, report_type="wednesday"):
     return {
         "category": "Week vs Previous Week",
         "sections": {
-            "A_weekly_summary": section_a_weekly_summary(current_week, prev_week, config),
+            "A_weekly_summary": section_a_weekly_summary(current_week, prev_week, config, week=week),
             "B_curves": section_b_curves(current_week, prev_week, config),
             "C_reason_pooh": section_c_reason_pooh(current_week, prev_week, config, report_type),
         }

@@ -20,10 +20,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.data_loader import (
     load_config, find_master_file, find_master_file_interactive,
+    find_master_file_local, find_master_file_sharepoint,
     find_file_by_name, _copy_to_temp, load_and_clean,
     filter_new_runs, filter_previous_week,
     filter_current_month, filter_previous_month,
-    load_comparison_data,
+    load_comparison_data, get_week_date_range,
 )
 from src.cat1_weekly import run_category1
 from src.cat2_monthly import run_category2
@@ -33,6 +34,8 @@ from src.report import generate_report
 from src.pdf_report import generate_pdf
 from src.emailer import send_report_email
 from src.state import save_wednesday_state, load_wednesday_state
+from src.weekly_kpi import compute_weekly_kpi
+from src.weekly_kpi_excel import write_kpi_excel
 
 
 def _build_report_title(report_type, week_start, week_end, week, master_filename):
@@ -53,6 +56,95 @@ def _build_report_title(report_type, week_start, week_end, week, master_filename
     week_num = week.split("-W")[-1] if "-W" in str(week) else str(week)
     basename = os.path.basename(master_filename)
     return f"PA1 - {prefix} Report {mon_str} to {sun_str} / Week {week_num} / {basename}"
+
+
+def _choose_source_interactive():
+    print("\n  Select master file source:")
+    print("    [1] Latest LOCAL file (OneDrive sync, fastest)")
+    print("    [2] SharePoint - latest update (downloads via auth)")
+    print("    [3] Browse local files (pick from list)")
+    choice = input("  > ").strip()
+    if choice in ("", "1"):
+        return "local"
+    if choice == "2":
+        return "sharepoint"
+    if choice == "3":
+        return "browse"
+    print(f"  Unrecognized choice '{choice}', defaulting to local.")
+    return "local"
+
+
+def _confirm_file(original, display_path):
+    from datetime import datetime as _dt
+    print("\n  ============================================================")
+    print(f"  Detected file: {original}")
+    print(f"  Path:          {display_path}")
+    if os.path.exists(display_path):
+        mtime = _dt.fromtimestamp(os.path.getmtime(display_path)).strftime("%Y-%m-%d %H:%M")
+        size_mb = os.path.getsize(display_path) / 1024 / 1024
+        print(f"  Modified:      {mtime}  ({size_mb:.1f} MB)")
+    print("  ============================================================")
+    ans = input("  Proceed with this file? [Y/n]: ").strip().lower()
+    return ans in ("", "y", "yes")
+
+
+def _choose_week_interactive(df, config):
+    """List recent weeks in the data and let the user pick one. Returns a week ID or None."""
+    week_col = config["filtering"]["week_column"]
+    if week_col not in df.columns:
+        return None
+
+    week_counts = (
+        df[df[week_col].notna()]
+        .groupby(week_col).size().reset_index(name="runs")
+        .sort_values(week_col, ascending=False)
+    )
+    if week_counts.empty:
+        return None
+
+    print("\n  Available weeks (most recent first):")
+    shown = []
+    for i, (_, row) in enumerate(week_counts.head(10).iterrows(), 1):
+        wk = row[week_col]
+        runs = int(row["runs"])
+        try:
+            ws_dt, we_dt = get_week_date_range(wk)
+            date_str = f"{ws_dt.date()} to {we_dt.date()}"
+        except Exception:
+            date_str = ""
+        shown.append(wk)
+        print(f"    [{i}] {wk}  ({date_str})  - {runs} runs")
+    print("    [Enter] = latest (option 1)")
+    print("    Or type a week ID (e.g. 26-W12)")
+
+    choice = input("  > ").strip()
+    if choice == "":
+        return shown[0]
+    if choice.isdigit():
+        n = int(choice)
+        if 1 <= n <= len(shown):
+            return shown[n - 1]
+        for wk in shown:
+            if isinstance(wk, str) and wk.endswith(f"-W{n:02d}"):
+                return wk
+    up = choice.upper().replace(" ", "")
+    if up.startswith("W") and up[1:].isdigit():
+        n = int(up[1:])
+        for wk in shown:
+            if isinstance(wk, str) and wk.endswith(f"-W{n:02d}"):
+                return wk
+    if "-W" in up:
+        return choice
+    print(f"  Unrecognized choice '{choice}', using latest ({shown[0]}).")
+    return shown[0]
+
+
+def _build_kpi_excel_filename(report_type, week, master_filename):
+    """Filename for the Weekly KPI Summary Excel attached to the report."""
+    prefix = "Wed" if report_type == "wednesday" else "Fri"
+    week_num = week.split("-W")[-1] if "-W" in str(week) else str(week)
+    master_base = os.path.splitext(os.path.basename(master_filename))[0]
+    return f"PA1 - {prefix} Weekly KPI - Week {week_num} - {master_base}.xlsx"
 
 
 def main():
@@ -96,8 +188,9 @@ def main():
         original_filename = os.path.basename(args.file)
 
     elif report_type == "wednesday":
-        # Check if Wednesday report was already generated today (scheduled safety net)
-        if args.report:  # Only check for scheduled runs, not ad-hoc
+        # Skip-if-already-generated-today guard: only for scheduled (non-TTY) runs.
+        # Manual / interactive runs are always allowed to re-generate.
+        if args.report and not sys.stdin.isatty():
             wed_state = load_wednesday_state()
             if wed_state and wed_state.get("saved_at", ""):
                 from datetime import date
@@ -160,6 +253,14 @@ def main():
     date_start = args.date_range[0] if args.date_range else None
     date_end = args.date_range[1] if args.date_range else None
 
+    # Interactive week picker for manual runs only.
+    # Skipped when: --week or --date-range provided, or Friday auto, or non-TTY.
+    if (sys.stdin.isatty() and not args.week and not args.date_range
+            and args.report != "friday"):
+        chosen_week = _choose_week_interactive(df, config)
+        if chosen_week:
+            args.week = chosen_week
+
     new_runs, week, week_start, week_end = filter_new_runs(
         df, config, week=args.week, date_start=date_start, date_end=date_end
     )
@@ -195,7 +296,7 @@ def main():
     print("\n[6/8] Running analysis...")
 
     print("  Category 1: Week vs Previous Week...")
-    cat1_results = run_category1(new_runs, prev_week, config, report_type)
+    cat1_results = run_category1(new_runs, prev_week, config, report_type, week=week)
 
     print("  Category 2: Monthly Highlights...")
     cat2_results = run_category2(current_month, prev_month, config, report_type)
@@ -260,7 +361,19 @@ def main():
 
         pdf_path = generate_pdf(all_results, report_title=title)
         print(f"  PDF saved: {pdf_path}")
-        pdf_paths = [pdf_path]
+        attachments = [pdf_path]
+
+        # Weekly KPI Summary Excel (per-hole-size table)
+        try:
+            print("\n  Computing Weekly KPI Summary...")
+            kpi_data = compute_weekly_kpi(new_runs, prev_week, week=week)
+            kpi_filename = _build_kpi_excel_filename(report_type, week, original_filename)
+            kpi_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), kpi_filename)
+            write_kpi_excel(kpi_data, kpi_path)
+            print(f"  KPI Excel saved: {kpi_path}")
+            attachments.append(kpi_path)
+        except Exception as e:
+            print(f"  WARNING: Weekly KPI Excel failed: {e}")
 
         if args.report == "friday":
             print("  Executive summary: [coming soon]")
@@ -273,11 +386,13 @@ def main():
                 f"Total new runs: {len(new_runs)}\n"
                 f"Week: {week} ({week_start.date()} to {week_end.date()})\n"
                 f"Master file: {original_filename}\n\n"
-                f"See attached PDF(s) for full analysis.\n\n"
+                f"Attached:\n"
+                f"  - Full analysis PDF\n"
+                f"  - Weekly KPI Summary (per-hole-size table)\n\n"
                 f"-- PA1"
             )
             print("\n  Sending email via Outlook...")
-            send_report_email(subject=title, body_text=body, pdf_paths=pdf_paths, recipient=recipient)
+            send_report_email(subject=title, body_text=body, pdf_paths=attachments, recipient=recipient)
         elif args.no_email:
             print("\n  Email skipped (--no-email flag)")
     else:

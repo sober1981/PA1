@@ -96,16 +96,46 @@ class PerformanceReport(FPDF):
         self.cell(w, 6, label, align="C")
         self.set_xy(x + w + 5, y)
 
+    def cell(self, w=None, h=None, text="", *args, **kwargs):
+        """Override to auto-sanitize text for latin-1 fonts."""
+        return super().cell(w, h, _latin1(text), *args, **kwargs)
+
+    def multi_cell(self, w=None, h=None, text="", *args, **kwargs):
+        """Override to auto-sanitize text for latin-1 fonts."""
+        return super().multi_cell(w, h, _latin1(text), *args, **kwargs)
+
     def check_space(self, needed=30):
         """Add a new page if not enough space."""
         if self.get_y() + needed > self.h - 25:
             self.add_page()
 
 
+_UNICODE_REPLACEMENTS = {
+    "\u2014": "--",   # em dash
+    "\u2013": "-",    # en dash
+    "\u2018": "'",    # left single quote
+    "\u2019": "'",    # right single quote
+    "\u201c": '"',    # left double quote
+    "\u201d": '"',    # right double quote
+    "\u2026": "...",  # ellipsis
+    "\u2022": "*",    # bullet
+    "\u00b7": "*",    # middle dot
+    "\u2032": "'",    # prime
+    "\u2033": '"',    # double prime
+    "\u2010": "-",    # hyphen
+    "\u2011": "-",    # non-breaking hyphen
+    "\u2012": "-",    # figure dash
+    "\u2015": "--",   # horizontal bar
+    "\u2212": "-",    # minus sign
+}
+
+
 def _latin1(text):
     """Sanitize text for Helvetica (Latin-1 encoding)."""
     if not isinstance(text, str):
         text = str(text)
+    for char, replacement in _UNICODE_REPLACEMENTS.items():
+        text = text.replace(char, replacement)
     return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
@@ -158,44 +188,306 @@ def _table_row_color(pdf, alt, flagged=False, flag_color=(255, 240, 238)):
 # Category 1 rendering
 # =========================================================================
 
-def _render_cat1_summary(pdf, section):
-    """1A: Weekly Summary table."""
-    pdf.section_title("1A. Weekly Summary (JOB_TYPE / MOTOR_TYPE2)")
+_MOTOR_RGB = {
+    "TDI CONV":   (213, 232, 212),
+    "CAM RENTAL": (231, 230, 230),
+    "CAM DD":     (244, 204, 204),
+    "3RD PARTY":  (207, 226, 243),
+}
+_DIFF_NEG_RGB = (192, 0, 0)
+_DIFF_POS_RGB = (0, 100, 0)
+_GRAD_LOW_RGB = (248, 105, 107)   # red
+_GRAD_MID_RGB = (255, 235, 132)   # yellow
+_GRAD_HIGH_RGB = (99, 190, 123)   # green
 
-    ct = section["current_totals"]
-    pt = section["previous_totals"]
-    dt = section["delta_totals"]
 
-    # Grand totals row
-    cols = [55, 30, 30, 30]
-    _table_header(pdf, cols, ["Metric", "Current Week", "Previous Week", "Delta"])
-    for label, ck, fmt in [("Runs", "runs", "d"), ("Total Footage (ft)", "total_drill", ",.0f"), ("Total Hours", "total_hrs", ",.1f")]:
-        _table_row_color(pdf, label == "Total Footage (ft)")
-        pdf.cell(cols[0], 5, f"  {label}", fill=True)
-        pdf.cell(cols[1], 5, f"{ct[ck]:{fmt}}", align="C", fill=True)
-        pdf.cell(cols[2], 5, f"{pt[ck]:{fmt}}", align="C", fill=True)
-        pdf.set_font("Helvetica", "B", 7)
-        pdf.cell(cols[3], 5, _delta_str(dt[ck], fmt=".0f" if "d" in fmt or ",.0f" in fmt else ".1f"), align="C", fill=True)
-        pdf.set_font("Helvetica", "", 7)
+def _motor_key(s):
+    if not s:
+        return None
+    k = str(s).upper().strip()
+    return k if k in _MOTOR_RGB else None
+
+
+def _interp(c1, c2, t):
+    return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2))
+
+
+def _gradient_color(value, vmin, vmax, more_is_better=True):
+    """Return RGB tuple along red→yellow→green (or reversed for more-is-worse)."""
+    if vmax <= vmin:
+        return (255, 255, 255)
+    t = (value - vmin) / (vmax - vmin)
+    t = max(0.0, min(1.0, t))
+    if not more_is_better:
+        t = 1.0 - t
+    if t <= 0.5:
+        return _interp(_GRAD_LOW_RGB, _GRAD_MID_RGB, t * 2)
+    return _interp(_GRAD_MID_RGB, _GRAD_HIGH_RGB, (t - 0.5) * 2)
+
+
+def _diff_text(value, fmt=",.0f"):
+    if value is None:
+        return ""
+    if value > 0:
+        return f"+{value:{fmt}}"
+    return f"{value:{fmt}}"
+
+
+def _kpi_summary_table(pdf, kpi):
+    """Summary KPI table — per hole size + Grand Total."""
+    cols = [10, 18, 18, 22, 24, 22, 24, 22, 22, 22]  # 204mm
+    headers = ["Week", "Hole Size", "Total Runs", "Total Hrs", "Hrs Diff vs Prev",
+               "% G (Hrs)", "Total Drill", "Ftg vs Prev", "% G (Drill)", "Total Incidents"]
+    pdf.sub_title("Summary Table (per Hole Size)")
+    pdf.set_x((pdf.w - sum(cols)) / 2)  # center
+    _table_header(pdf, cols, headers, bg_color=(31, 78, 120))
+
+    week_str = str(kpi.get("week", ""))
+    week_num = week_str.split("-W")[-1] if "-W" in week_str else week_str
+    blocks = kpi.get("blocks", [])
+
+    # Min/max across data rows for gradient
+    runs_vals = [b["curr_total"]["runs"] for b in blocks]
+    hrs_vals = [b["curr_total"]["total_hrs"] for b in blocks]
+    drill_vals = [b["curr_total"]["total_drill"] for b in blocks]
+    inc_vals = [b["curr_total"]["incident_count"] for b in blocks]
+
+    pdf.set_font("Helvetica", "", 7)
+    for b in blocks:
+        ct = b["curr_total"]
+        diff = b["diff"]
+        pdf.set_x((pdf.w - sum(cols)) / 2)
+        # Cells with gradient fills
+        # Week
+        pdf.set_fill_color(255, 255, 255)
+        pdf.set_text_color(60, 60, 60)
+        pdf.cell(cols[0], 5, str(week_num), align="C", fill=True)
+        pdf.cell(cols[1], 5, f'{b["hole_size"]:g}"', align="C", fill=True)
+        # Total Runs (gradient: more is better)
+        r, g, bl = _gradient_color(ct["runs"], min(runs_vals), max(runs_vals), True)
+        pdf.set_fill_color(r, g, bl)
+        pdf.cell(cols[2], 5, f"{ct['runs']}", align="C", fill=True)
+        # Total Hrs (gradient: more is better)
+        r, g, bl = _gradient_color(ct["total_hrs"], min(hrs_vals), max(hrs_vals), True)
+        pdf.set_fill_color(r, g, bl)
+        pdf.cell(cols[3], 5, f"{ct['total_hrs']:,.1f}", align="C", fill=True)
+        # Hrs Diff (red/green font)
+        pdf.set_fill_color(255, 255, 255)
+        if diff["total_hrs"] < 0:
+            pdf.set_text_color(*_DIFF_NEG_RGB)
+        elif diff["total_hrs"] > 0:
+            pdf.set_text_color(*_DIFF_POS_RGB)
+        pdf.cell(cols[4], 5, _diff_text(diff["total_hrs"], ",.1f"), align="C", fill=True)
+        pdf.set_text_color(60, 60, 60)
+        # % G Hrs
+        pdf.cell(cols[5], 5, f"{ct['g_pct_hrs']*100:.1f}%", align="C", fill=True)
+        # Total Drill (gradient)
+        r, g, bl = _gradient_color(ct["total_drill"], min(drill_vals), max(drill_vals), True)
+        pdf.set_fill_color(r, g, bl)
+        pdf.cell(cols[6], 5, f"{ct['total_drill']:,.0f}", align="C", fill=True)
+        # Ftg Diff
+        pdf.set_fill_color(255, 255, 255)
+        if diff["total_drill"] < 0:
+            pdf.set_text_color(*_DIFF_NEG_RGB)
+        elif diff["total_drill"] > 0:
+            pdf.set_text_color(*_DIFF_POS_RGB)
+        pdf.cell(cols[7], 5, _diff_text(diff["total_drill"], ",.0f"), align="C", fill=True)
+        pdf.set_text_color(60, 60, 60)
+        # % G Drill
+        pdf.cell(cols[8], 5, f"{ct['g_pct_drill']*100:.1f}%", align="C", fill=True)
+        # Incidents (gradient: more is worse)
+        if max(inc_vals) > 0:
+            r, g, bl = _gradient_color(ct["incident_count"], min(inc_vals), max(inc_vals), False)
+            pdf.set_fill_color(r, g, bl)
+        else:
+            pdf.set_fill_color(255, 255, 255)
+        pdf.cell(cols[9], 5, f"{ct['incident_count']}", align="C", fill=True)
         pdf.ln()
-    pdf.ln(3)
 
-    # Breakdown table
-    current = section["current"]
-    if len(current) > 0:
-        pdf.sub_title("Current Week Breakdown")
-        bcols = [45, 45, 20, 30, 25]
-        _table_header(pdf, bcols, ["JOB_TYPE", "MOTOR_TYPE2", "Runs", "Footage (ft)", "Hours"])
-        alt = False
-        for _, row in current.iterrows():
-            _table_row_color(pdf, alt)
-            pdf.cell(bcols[0], 5, f"  {_safe(row.get('JOB_TYPE'))[:25]}", fill=True)
-            pdf.cell(bcols[1], 5, f"  {_safe(row.get('MOTOR_TYPE2'))[:25]}", fill=True)
-            pdf.cell(bcols[2], 5, f"{row['runs']}", align="C", fill=True)
-            pdf.cell(bcols[3], 5, f"{row['total_drill']:,.0f}", align="C", fill=True)
-            pdf.cell(bcols[4], 5, f"{row['total_hrs']:,.1f}", align="C", fill=True)
+    # Grand Total row (no fill, bold, true diffs)
+    g_runs = sum(runs_vals)
+    g_hrs = round(sum(hrs_vals), 2)
+    g_drill = sum(drill_vals)
+    g_inc = sum(inc_vals)
+    g_prev_hrs = kpi.get("grand_prev_total_hrs", 0.0)
+    g_prev_drill = kpi.get("grand_prev_total_drill", 0)
+    g_hrs_diff = round(g_hrs - g_prev_hrs, 2)
+    g_drill_diff = int(round(g_drill - g_prev_drill))
+    g_pct_hrs_sum = sum(b["curr_total"]["g_pct_hrs"] for b in blocks)
+    g_pct_drill_sum = sum(b["curr_total"]["g_pct_drill"] for b in blocks)
+
+    pdf.set_x((pdf.w - sum(cols)) / 2)
+    pdf.set_fill_color(255, 255, 255)
+    pdf.set_text_color(30, 30, 30)
+    pdf.set_font("Helvetica", "B", 7)
+    pdf.cell(cols[0] + cols[1], 5, "Grand Total", align="C", fill=True)
+    pdf.cell(cols[2], 5, f"{g_runs}", align="C", fill=True)
+    pdf.cell(cols[3], 5, f"{g_hrs:,.1f}", align="C", fill=True)
+    if g_hrs_diff < 0:
+        pdf.set_text_color(*_DIFF_NEG_RGB)
+    elif g_hrs_diff > 0:
+        pdf.set_text_color(*_DIFF_POS_RGB)
+    pdf.cell(cols[4], 5, _diff_text(g_hrs_diff, ",.1f"), align="C", fill=True)
+    pdf.set_text_color(30, 30, 30)
+    pdf.cell(cols[5], 5, f"{g_pct_hrs_sum*100:.1f}%", align="C", fill=True)
+    pdf.cell(cols[6], 5, f"{g_drill:,.0f}", align="C", fill=True)
+    if g_drill_diff < 0:
+        pdf.set_text_color(*_DIFF_NEG_RGB)
+    elif g_drill_diff > 0:
+        pdf.set_text_color(*_DIFF_POS_RGB)
+    pdf.cell(cols[7], 5, _diff_text(g_drill_diff, ",.0f"), align="C", fill=True)
+    pdf.set_text_color(30, 30, 30)
+    pdf.cell(cols[8], 5, f"{g_pct_drill_sum*100:.1f}%", align="C", fill=True)
+    pdf.cell(cols[9], 5, f"{g_inc}", align="C", fill=True)
+    pdf.ln()
+    pdf.set_font("Helvetica", "", 7)
+
+
+def _kpi_detailed_table(pdf, kpi):
+    """Detailed KPI table — per Motor Type / Job Type / Series 20 grouped by hole size."""
+    cols = [8, 12, 18, 16, 12, 10, 14, 12, 12, 16, 12, 12, 14, 12, 12, 16, 10, 12]  # 228mm
+    headers = ["Wk", "Hole", "Motor Type", "Job Type", "S20",
+               "Runs", "Hrs", "% W Hrs", "% G Hrs",
+               "Total Drill", "% W Drl", "% G Drl",
+               "Drill Hrs", "Avg ROP", "Slide %", "Avg Run Len",
+               "MY Avg", "Incid"]
+    pdf.check_space(40)
+    pdf.sub_title("Detailed Table (per Motor Type / Job Type / Series 20)")
+    left_x = (pdf.w - sum(cols)) / 2
+
+    pdf.set_x(left_x)
+    _table_header(pdf, cols, headers, bg_color=(31, 78, 120))
+
+    week_str = str(kpi.get("week", ""))
+    week_num = week_str.split("-W")[-1] if "-W" in week_str else week_str
+
+    pdf.set_font("Helvetica", "", 6)
+    for b in kpi.get("blocks", []):
+        # Per-hole-size winner (group with most TOTAL_DRILL)
+        winner_idx = -1
+        if b["rows"]:
+            winner_idx = max(range(len(b["rows"])),
+                             key=lambda i: b["rows"][i]["total_drill"])
+        for ri, r in enumerate(b["rows"]):
+            mkey = _motor_key(r.get("motor_type"))
+            fill = _MOTOR_RGB.get(mkey, (255, 255, 255))
+            pdf.set_fill_color(*fill)
+            pdf.set_text_color(60, 60, 60)
+            pdf.set_x(left_x)
+            pdf.cell(cols[0], 4, str(week_num), align="C", fill=True)
+            pdf.cell(cols[1], 4, f'{b["hole_size"]:g}"', align="C", fill=True)
+            pdf.cell(cols[2], 4, _latin1(str(r.get("motor_type", "")))[:12], align="C", fill=True)
+            pdf.cell(cols[3], 4, _latin1(str(r.get("job_type", "")))[:11], align="C", fill=True)
+            pdf.cell(cols[4], 4, str(r.get("series_20", "")), align="C", fill=True)
+            pdf.cell(cols[5], 4, f"{r['runs']}", align="C", fill=True)
+            pdf.cell(cols[6], 4, f"{r['total_hrs']:,.1f}", align="C", fill=True)
+            pdf.cell(cols[7], 4, f"{r['w_pct_hrs']*100:.1f}%", align="C", fill=True)
+            pdf.cell(cols[8], 4, f"{r['g_pct_hrs']*100:.1f}%", align="C", fill=True)
+            # Total Drill — darker fill if this is the per-hole-size winner
+            if ri == winner_idx and mkey:
+                # 70% darker shade of motor-type fill
+                dark = tuple(max(0, int(c * 0.55)) for c in fill)
+                pdf.set_fill_color(*dark)
+                pdf.set_text_color(255, 255, 255)
+                pdf.set_font("Helvetica", "B", 6)
+                pdf.cell(cols[9], 4, f"{r['total_drill']:,.0f}", align="C", fill=True)
+                pdf.set_font("Helvetica", "", 6)
+                pdf.set_fill_color(*fill)
+                pdf.set_text_color(60, 60, 60)
+            else:
+                pdf.cell(cols[9], 4, f"{r['total_drill']:,.0f}", align="C", fill=True)
+            pdf.cell(cols[10], 4, f"{r['w_pct_drill']*100:.1f}%", align="C", fill=True)
+            pdf.cell(cols[11], 4, f"{r['g_pct_drill']*100:.1f}%", align="C", fill=True)
+            pdf.cell(cols[12], 4, f"{r['drilling_hrs']:,.1f}", align="C", fill=True)
+            pdf.cell(cols[13], 4, f"{r['avg_rop']:,.1f}", align="C", fill=True)
+            pdf.cell(cols[14], 4, f"{r['avg_slide_pct']*100:.1f}%", align="C", fill=True)
+            pdf.cell(cols[15], 4, f"{r['avg_run_length']:,.0f}", align="C", fill=True)
+            my = r.get("my_avg")
+            pdf.cell(cols[16], 4, f"{my:.1f}" if my is not None else "", align="C", fill=True)
+            inc = r.get("incident_count", 0)
+            pdf.cell(cols[17], 4, f"{inc}" if inc else "", align="C", fill=True)
             pdf.ln()
-            alt = not alt
+        # Slim spacer line between hole sizes
+        pdf.ln(0.5)
+    pdf.set_font("Helvetica", "", 7)
+
+
+def _kpi_longest_run_table(pdf, kpi):
+    """Longest Run table — one row per hole size, packed (no gaps)."""
+    cols = [8, 12, 18, 16, 12, 14, 18, 14, 12, 14, 10, 12, 90]  # 250mm
+    headers = ["Wk", "Hole", "Motor Type", "Job Type", "S20",
+               "Total Hrs", "Total Drill", "Drill Hrs",
+               "Avg ROP", "Slide %", "MY Avg", "Incid", "Comment"]
+    pdf.check_space(35)
+    pdf.sub_title("Longest Run Table (per Hole Size)")
+    left_x = (pdf.w - sum(cols)) / 2
+
+    pdf.set_x(left_x)
+    _table_header(pdf, cols, headers, bg_color=(31, 78, 120))
+
+    week_str = str(kpi.get("week", ""))
+    week_num = week_str.split("-W")[-1] if "-W" in week_str else week_str
+
+    pdf.set_font("Helvetica", "", 6)
+    for b in kpi.get("blocks", []):
+        lr = b.get("longest_run")
+        if not lr:
+            continue
+        mkey = _motor_key(lr.get("motor_type"))
+        fill = _MOTOR_RGB.get(mkey, (255, 255, 255))
+        pdf.set_fill_color(*fill)
+        pdf.set_text_color(60, 60, 60)
+        pdf.set_x(left_x)
+        pdf.cell(cols[0], 4, str(week_num), align="C", fill=True)
+        pdf.cell(cols[1], 4, f'{b["hole_size"]:g}"', align="C", fill=True)
+        pdf.cell(cols[2], 4, _latin1(str(lr.get("motor_type", "")))[:12], align="C", fill=True)
+        pdf.cell(cols[3], 4, _latin1(str(lr.get("job_type", "")))[:11], align="C", fill=True)
+        pdf.cell(cols[4], 4, str(lr.get("series_20", "")), align="C", fill=True)
+        pdf.cell(cols[5], 4, f"{lr['total_hrs']:,.1f}", align="C", fill=True)
+        pdf.cell(cols[6], 4, f"{lr['total_drill']:,.0f}", align="C", fill=True)
+        pdf.cell(cols[7], 4, f"{lr['drilling_hrs']:,.1f}", align="C", fill=True)
+        pdf.cell(cols[8], 4, f"{lr['avg_rop']:,.1f}", align="C", fill=True)
+        pdf.cell(cols[9], 4, f"{lr['avg_slide_pct']*100:.1f}%", align="C", fill=True)
+        my = lr.get("my_avg")
+        pdf.cell(cols[10], 4, f"{my:.1f}" if my is not None else "", align="C", fill=True)
+        inc = lr.get("incident_count", 0)
+        pdf.cell(cols[11], 4, f"{inc}" if inc else "", align="C", fill=True)
+        pdf.cell(cols[12], 4, _latin1(lr.get("comment", "")), align="L", fill=True)
+        pdf.ln()
+    pdf.set_font("Helvetica", "", 7)
+
+
+def _render_cat1_summary(pdf, section):
+    """1A: Weekly Summary — three KPI tables."""
+    pdf.section_title("1A. Weekly Summary")
+    kpi = section.get("kpi")
+    if not kpi or not kpi.get("blocks"):
+        # Fallback: legacy mini-summary if KPI data is missing
+        ct = section["current_totals"]
+        pt = section["previous_totals"]
+        dt = section["delta_totals"]
+        cols = [55, 30, 30, 30]
+        _table_header(pdf, cols, ["Metric", "Current Week", "Previous Week", "Delta"])
+        for label, ck, fmt in [("Runs", "runs", "d"),
+                               ("Total Footage (ft)", "total_drill", ",.0f"),
+                               ("Total Hours", "total_hrs", ",.1f")]:
+            _table_row_color(pdf, label == "Total Footage (ft)")
+            pdf.cell(cols[0], 5, f"  {label}", fill=True)
+            pdf.cell(cols[1], 5, f"{ct[ck]:{fmt}}", align="C", fill=True)
+            pdf.cell(cols[2], 5, f"{pt[ck]:{fmt}}", align="C", fill=True)
+            pdf.set_font("Helvetica", "B", 7)
+            pdf.cell(cols[3], 5, _delta_str(dt[ck], fmt=".0f" if "d" in fmt or ",.0f" in fmt else ".1f"),
+                     align="C", fill=True)
+            pdf.set_font("Helvetica", "", 7)
+            pdf.ln()
+        pdf.ln(4)
+        return
+
+    _kpi_summary_table(pdf, kpi)
+    pdf.ln(4)
+    _kpi_detailed_table(pdf, kpi)
+    pdf.ln(4)
+    _kpi_longest_run_table(pdf, kpi)
     pdf.ln(4)
 
 
@@ -919,33 +1211,11 @@ def generate_pdf(all_results, output_dir=None, report_title=None):
     pdf.cell(0, 8, f"Week {week}  |  {ws.date()} to {we.date()}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
-    # KPI summary cards
-    cat3 = all_results.get("category3")
-    rop_summary = cat3["sections"].get("A_avg_rop") if cat3 else None
-    drill_summary = cat3["sections"].get("B_longest_runs") if cat3 else None
-    slide_summary = cat3["sections"].get("C_sliding_pct") if cat3 else None
-
-    pdf.kpi_card("Total New Runs", str(meta["total_new_runs"]))
-    if rop_summary:
-        pdf.kpi_card("Week Avg ROP", f"{rop_summary['week_avg']}", "ft/hr")
-        pdf.kpi_card("Underperforming", str(rop_summary['flagged_below']), "runs", (200, 60, 30))
-        pdf.kpi_card("Top Performers", str(rop_summary['flagged_above']), "runs", (30, 140, 60))
-    pdf.ln(24)
-
-    if drill_summary:
-        pdf.kpi_card("Week Avg Footage", f"{drill_summary['week_avg']:,.0f}", "ft")
-        pdf.kpi_card("Max Footage", f"{drill_summary['week_max']:,.0f}", "ft")
-    if slide_summary and slide_summary["total_lat_runs"] > 0:
-        pdf.kpi_card("LAT Runs", str(slide_summary['total_lat_runs']))
-        pdf.kpi_card("Avg Sliding %", f"{slide_summary['week_avg']}", "%")
-    pdf.ln(24)
-
     # =====================================================================
     # CATEGORY 1: Week vs Previous Week
     # =====================================================================
     cat1 = all_results.get("category1")
     if cat1:
-        pdf.add_page()
         pdf.category_header(1, cat1["category"])
         sections = cat1["sections"]
         _render_cat1_summary(pdf, sections["A_weekly_summary"])
@@ -972,6 +1242,7 @@ def generate_pdf(all_results, output_dir=None, report_title=None):
     # =====================================================================
     # CATEGORY 3: Historical Analysis
     # =====================================================================
+    cat3 = all_results.get("category3")
     if cat3:
         pdf.add_page()
         pdf.category_header(3, cat3["category"])
