@@ -7,23 +7,31 @@ Weekly drilling run analysis tool for Scout Downhole. Reads the master Excel fil
 Every Wednesday, new weekly drilling runs (Monday-Sunday) are uploaded to a SharePoint/Teams master Excel file (`MASTER_MCS_MERGE_*.xlsx`). PA1 analyzes the new runs and generates a structured report comparing current performance against previous periods and historical baselines.
 
 ```
-python run_agent.py --report wednesday                 # Wednesday report (interactive file pick)
+run_manual.bat                                         # Manual Wed run via double-click (interactive)
+python run_agent.py --report wednesday                 # Wednesday report (interactive file + week pick if TTY)
 python run_agent.py --report friday                    # Friday report (auto-picks QC'd Teams file)
-python run_agent.py --week 26-W07                      # Specific week (ad-hoc)
+python run_agent.py --week 26-W07                      # Specific week (ad-hoc, skips week prompt)
 python run_agent.py --date-range 2026-02-09 2026-02-15 # Date range (ad-hoc)
-python run_agent.py --file path/to/master.xlsx         # Custom file
+python run_agent.py --file path/to/master.xlsx         # Custom file (skips file prompt)
+python run_kpi_excel.py                                # Standalone Weekly KPI Excel (no PDF/email)
 ```
 
-Add `--no-email` to any command to skip emailing and just generate console + PDF output.
+Add `--no-email` to any `run_agent.py` command to skip emailing.
 
-## Report Structure (v2.2)
+Each report run produces **two attachments** that are emailed and saved to the project folder:
+- **PDF**: full performance report with all 4 categories
+- **Weekly KPI Excel**: per-hole-size Summary / Detailed / Longest Run tables (also embedded in Cat 1A of the PDF)
+
+For step-by-step instructions, see [HOW_TO_RUN.md](HOW_TO_RUN.md).
+
+## Report Structure (v2.4)
 
 The report is organized into 4 categories:
 
 ### Category 1: Week vs Previous Week
 | Section | Description |
 |---------|-------------|
-| **A - Weekly Summary** | Run count, total footage, total hours by JOB_TYPE and MOTOR_TYPE2. Current vs previous week with deltas. |
+| **A - Weekly Summary (KPI tables)** | Three per-hole-size tables: **Summary** (totals + diff vs prev week, with green/yellow/red gradients), **Detailed** (per MOTOR_TYPE2 / JOB_TYPE / SERIES 20 with motor-type fills + per-hole-size winner highlight), **Longest Run** (single row per hole size with JOB_NUM \| OPERATOR \| Phase_CALC \| BEND_HSG comment). Same tables exported as a standalone Excel. |
 | **B - Curves Analysis** | 1-run curves (best outcome) vs multi-run curves. Flags operators. SOURCE = Motor_KPI only. |
 | **C - Reason to POOH** | Breakdown by classification (TD, ROP, Bit, Motor, MWD, BHA, Pressure, Other). Motor detail shows Operator, Hole Size, and SN. Wednesday uses REASON_POOH, Friday uses REASON_POOH_QC. |
 
@@ -60,11 +68,13 @@ Compares Wednesday (pre-QC) and Friday (post-QC) files cell by cell.
 PA1 generates two reports per week, emailed to jsoberanes@scoutdownhole.com via Outlook:
 
 ### Wednesday - "First Look"
-- **Trigger**: Manual
-- **File selection**: Interactive -- PA1 lists available master files, you pick the one you just uploaded (local folder)
+- **Trigger**: Manual (`run_manual.bat` or `run_agent.py --report wednesday`)
+- **File selection**: Interactive (TTY) -- PA1 lists available master files, you pick the one you just uploaded
+- **Week selection**: Interactive (TTY) -- PA1 lists the 10 most recent weeks in the data, defaults to latest
 - **Data**: Raw, not yet QC'd
 - **Categories**: 1-3 only (no QC Audit)
 - **State**: Saves the selected filename + path to `state/last_run.json` for Friday reuse
+- **Auto safety net**: Scheduled task at Wed 14:00 (`run_wednesday.bat`) -- skips if you already ran it manually today, otherwise auto-picks latest file + latest week, no prompts
 
 ### Friday - "QC'd Report"
 - **Trigger**: Automatic -- Windows Task Scheduler, every Friday at 10:00 AM
@@ -124,24 +134,30 @@ Comparisons use 5 variable groups with a **multi-level fallback chain** -- start
 ```
 scorecard-pa/
 ├── run_agent.py              # CLI entry point (--report wednesday/friday/--week/--date-range)
-├── run_friday.bat            # Batch script for Task Scheduler (Fri 10 AM, with failure email fallback)
+├── run_kpi_excel.py          # Standalone Weekly KPI Summary Excel generator (ad-hoc week analysis)
+├── run_manual.bat            # Double-click manual Wednesday run (interactive prompts)
+├── run_wednesday.bat         # Task Scheduler: Wed 14:00 auto-run (with failure email fallback)
+├── run_friday.bat            # Task Scheduler: Fri 10:00 auto-run (with failure email fallback)
+├── HOW_TO_RUN.md             # Step-by-step user guide
 ├── config/
 │   └── settings.yaml         # Configuration (paths, thresholds, variable groups, POOH classes)
 ├── src/
 │   ├── __init__.py
 │   ├── data_loader.py        # Read Excel, clean data, filter by week/month, interactive file picker
-│   ├── cat1_weekly.py        # Category 1: Week vs Previous Week (3 sections)
+│   ├── cat1_weekly.py        # Category 1: Week vs Previous Week (3 sections, includes KPI compute hook)
 │   ├── cat2_monthly.py       # Category 2: Monthly Highlights (6 sections)
 │   ├── kpi_engine.py         # Category 3: Historical KPIs + pattern highlights
 │   ├── qc_audit.py           # Category 4: QC Audit — Wed vs Fri diff engine (Friday only)
+│   ├── weekly_kpi.py         # Weekly KPI Summary: per-hole-size Summary / Detailed / Longest Run computation
+│   ├── weekly_kpi_excel.py   # Weekly KPI Summary Excel writer (3 tables, gradients, motor-type fills)
 │   ├── comparator.py         # Multi-level fallback baseline comparison
 │   ├── state.py              # Wednesday/Friday state management (last_run.json)
 │   ├── report.py             # Console output (all 4 categories)
-│   ├── pdf_report.py         # PDF report (all 4 categories, fpdf2)
-│   └── emailer.py            # Outlook COM auto-send with PDF attachment
+│   ├── pdf_report.py         # PDF report (all 4 categories, fpdf2). Cat 1A renders KPI tables.
+│   └── emailer.py            # Outlook COM auto-send with attachments (PDF + KPI Excel)
 ├── state/                    # Runtime state (auto-generated, git-ignored)
 │   └── last_run.json
-├── logs/                     # Friday auto-run logs (git-ignored)
+├── logs/                     # Scheduled-run logs (git-ignored)
 ├── tests/
 │   └── __init__.py
 ├── requirements.txt          # pandas, openpyxl, pyyaml, fpdf2, pywin32, etc.
@@ -154,22 +170,29 @@ scorecard-pa/
 ```
 [1] Load config (settings.yaml)
 [2] Locate master file:
-    - Wednesday: interactive picker (user selects from numbered list)
-    - Friday: auto-pick from Teams sync (same filename as Wednesday)
+    - Wednesday TTY: interactive file picker
+    - Wednesday non-TTY (scheduled): auto-detect latest local
+    - Friday: auto-pick QC'd version from Teams sync (same filename as Wed)
     - Ad-hoc: auto-detect latest or use --file
 [3] Load & clean data
-[4] Derive time periods:
-    - current_week, prev_week     → Category 1
+[4] Filter current week:
+    - TTY (manual, not Friday): interactive week picker
+    - Non-TTY or --week given: use given/latest
+[5] Derive comparison time periods:
+    - prev_week                   → Category 1
     - current_month, prev_month   → Category 2
     - baseline (2025+)            → Category 3
-[5] Run analysis:
-    - run_category1(current_week, prev_week, config, report_type)
-    - run_category2(current_month, prev_month, config, report_type)
-    - run_category3(current_week, baseline, config)
-    - run_qc_audit(wed_df, fri_df, config, week_start, week_end)  ← Friday only
-[6] Generate reports (console + PDF)
-[7] Email via Outlook (unless --no-email)
-[8] Save state (Wednesday only)
+[6] Run analysis:
+    - run_category1(...)  ← also computes Weekly KPI structure (per-hole-size tables)
+    - run_category2(...)
+    - run_category3(...)
+    - run_qc_audit(...)   ← Friday only
+[7] Generate reports:
+    - Console output (all 4 categories)
+    - PDF (Cat 1A renders the 3 KPI tables; rest of categories follow)
+    - Weekly KPI Excel (standalone copy of Summary / Detailed / Longest Run)
+[8] Email via Outlook (PDF + KPI Excel attached) unless --no-email
+[9] Save state (Wednesday only)
 ```
 
 ## Flagging Logic (Category 3)
@@ -201,6 +224,8 @@ scorecard-pa/
 ## Roadmap
 
 - [x] Failure notification emails (v2.2 -- always get an email on Friday)
+- [x] QC Audit snapshot fix + Wednesday scheduled task + HOW_TO_RUN guide (v2.3)
+- [x] Weekly KPI Summary tables -- Summary / Detailed / Longest Run, in PDF Cat 1A and as standalone Excel; interactive week picker for manual runs (v2.4)
 - [ ] Force Friday to use same week as Wednesday (prevent week drift from extra rows)
 - [ ] Friday executive summary PDF (concise, management-ready)
 - [ ] QC Audit historical trends (track QC workload week over week)
