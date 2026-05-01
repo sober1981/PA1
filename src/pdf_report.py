@@ -20,48 +20,48 @@ class PerformanceReport(FPDF):
     def __init__(self, meta):
         super().__init__(orientation="L", format="letter")
         self.meta = meta
-        self.set_auto_page_break(auto=True, margin=20)
+        self.set_auto_page_break(auto=True, margin=15)
 
     def header(self):
-        self.set_font("Helvetica", "B", 10)
+        self.set_font("Helvetica", "B", 9)
         self.set_text_color(100, 100, 100)
         week = self.meta.get("week", "")
-        self.cell(0, 6, f"Scout Downhole - PA1 Performance Report | Week {week}", align="L")
-        self.ln(4)
-        self.set_draw_color(200, 60, 30)
-        self.set_line_width(0.8)
-        self.line(10, self.get_y(), self.w - 10, self.get_y())
-        self.ln(6)
-
-    def footer(self):
-        self.set_y(-15)
-        self.set_font("Helvetica", "I", 8)
-        self.set_text_color(150, 150, 150)
-        self.cell(0, 10, f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} | Page {self.page_no()}/{{nb}}", align="C")
-
-    def category_header(self, number, title):
-        self.set_font("Helvetica", "B", 16)
-        self.set_text_color(200, 60, 30)
-        self.cell(0, 12, f"Category {number}: {title}", new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 5, f"Scout Downhole - PA1 Performance Report | Week {week}", align="L")
+        self.ln(2)
         self.set_draw_color(200, 60, 30)
         self.set_line_width(0.6)
         self.line(10, self.get_y(), self.w - 10, self.get_y())
-        self.ln(6)
+        self.ln(3)
 
-    def section_title(self, title):
+    def footer(self):
+        self.set_y(-12)
+        self.set_font("Helvetica", "I", 7)
+        self.set_text_color(150, 150, 150)
+        self.cell(0, 8, f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} | Page {self.page_no()}/{{nb}}", align="C")
+
+    def category_header(self, number, title):
         self.set_font("Helvetica", "B", 12)
         self.set_text_color(200, 60, 30)
-        self.cell(0, 9, title, new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 8, f"Category {number}: {title}", new_x="LMARGIN", new_y="NEXT")
         self.set_draw_color(200, 60, 30)
-        self.set_line_width(0.3)
+        self.set_line_width(0.5)
         self.line(10, self.get_y(), self.w - 10, self.get_y())
         self.ln(3)
 
-    def sub_title(self, title):
+    def section_title(self, title):
         self.set_font("Helvetica", "B", 10)
+        self.set_text_color(200, 60, 30)
+        self.cell(0, 6, title, new_x="LMARGIN", new_y="NEXT")
+        self.set_draw_color(200, 60, 30)
+        self.set_line_width(0.3)
+        self.line(10, self.get_y(), self.w - 10, self.get_y())
+        self.ln(2)
+
+    def sub_title(self, title):
+        self.set_font("Helvetica", "B", 9)
         self.set_text_color(50, 50, 50)
-        self.cell(0, 7, title, new_x="LMARGIN", new_y="NEXT")
-        self.ln(1)
+        self.cell(0, 5, title, new_x="LMARGIN", new_y="NEXT")
+        self.ln(0.5)
 
     def body_text(self, text):
         self.set_font("Helvetica", "", 9)
@@ -472,8 +472,57 @@ def _kpi_longest_run_table(pdf, kpi):
     pdf.set_font("Helvetica", "", 7)
 
 
-def _render_cat1_summary(pdf, section):
-    """1A: Weekly Summary — three KPI tables."""
+_CHART_ASPECT = 0.462  # rendered image height/width ratio for matplotlib (11x5) figures
+
+
+def _render_cat1_trend_chart(pdf, section, metric, chart_type, label, compact=False):
+    """Embed one trend chart in the PDF.
+    compact=True uses a smaller image (~180mm wide) so two charts fit on one page."""
+    if not section or not section.get("hole_sizes"):
+        return
+    pdf.section_title(label)
+
+    try:
+        from src.trends import render_trend_chart
+        png_path = render_trend_chart(section, metric=metric, chart_type=chart_type)
+    except Exception as e:
+        pdf.body_text(f"Chart rendering failed: {e}")
+        return
+
+    if not png_path or not os.path.exists(png_path):
+        pdf.body_text("Chart rendering produced no output.")
+        return
+
+    page_w = pdf.w
+    img_w = 180 if compact else (page_w - 20)
+    x = (page_w - img_w) / 2  # center horizontally
+    pdf.image(png_path, x=x, y=pdf.get_y(), w=img_w)
+    pdf.set_y(pdf.get_y() + img_w * _CHART_ASPECT)
+    pdf.ln(2)
+
+    try:
+        os.remove(png_path)
+    except OSError:
+        pass
+
+
+def _render_cat1_trends(pdf, section):
+    """1D / 1E: 12-week stacked-area trends — Total Drill and Number of Runs."""
+    if not section or not section.get("hole_sizes"):
+        return
+    n_weeks = len(section["weeks"])
+    _render_cat1_trend_chart(
+        pdf, section, metric="drill", chart_type="stacked",
+        label=f"1D. Trends -- Total Drill by Hole Size ({n_weeks}-Week Stacked Area)",
+    )
+    _render_cat1_trend_chart(
+        pdf, section, metric="runs", chart_type="stacked",
+        label=f"1E. Trends -- Number of Runs by Hole Size ({n_weeks}-Week Stacked Area)",
+    )
+
+
+def _render_cat1_summary(pdf, section, trends_section=None):
+    """1A: Weekly Summary — three KPI tables, plus 12-week trend charts immediately after."""
     pdf.section_title("1A. Weekly Summary")
     kpi = section.get("kpi")
     if not kpi or not kpi.get("blocks"):
@@ -498,17 +547,43 @@ def _render_cat1_summary(pdf, section):
         pdf.ln(4)
         return
 
+    # Page 1 of Cat 1: Summary table + Longest Run table.
+    # (Detailed table is rendered later, on its own page — see _render_cat1_detailed.)
     _kpi_summary_table(pdf, kpi)
-    pdf.ln(4)
-    _kpi_detailed_table(pdf, kpi)
     pdf.ln(4)
     _kpi_longest_run_table(pdf, kpi)
     pdf.ln(4)
 
+    # Page 2 of Cat 1: trend charts (forced new page so both fit together).
+    if trends_section and trends_section.get("hole_sizes"):
+        pdf.add_page()
+        n_weeks = len(trends_section["weeks"])
+        _render_cat1_trend_chart(
+            pdf, trends_section, metric="drill", chart_type="stacked",
+            label=f"Trends -- Total Drill by Hole Size ({n_weeks}-Week Stacked Area)",
+            compact=True,
+        )
+        _render_cat1_trend_chart(
+            pdf, trends_section, metric="runs", chart_type="stacked",
+            label=f"Trends -- Number of Runs by Hole Size ({n_weeks}-Week Stacked Area)",
+            compact=True,
+        )
+
+
+def _render_cat1_detailed(pdf, section):
+    """Page 3 of Cat 1: the Detailed Table on a fresh page.
+    Curves Analysis (1B) flows below if there is room."""
+    pdf.add_page()
+    kpi = section.get("kpi")
+    if not kpi or not kpi.get("blocks"):
+        return
+    _kpi_detailed_table(pdf, kpi)
+    pdf.ln(4)
+
 
 def _render_cat1_curves(pdf, section):
-    """1B: Curves Analysis."""
-    pdf.check_space(40)
+    """1B: Curves Analysis. Flows on the same page as the Detailed table when possible."""
+    pdf.check_space(20)
     pdf.section_title("1B. Curves Analysis (Motor_KPI Source)")
 
     cur = section["current"]
@@ -557,8 +632,9 @@ def _render_cat1_curves(pdf, section):
 
 
 def _render_cat1_pooh(pdf, section):
-    """1C: Reason to POOH."""
-    pdf.check_space(40)
+    """1C: Reason to POOH — 12-week stacked-bar trend + Motor Issues table.
+    Forces a fresh page so the chart and table fit together."""
+    pdf.add_page()
     pdf.section_title(f"1C. Reason to POOH ({section['reason_col_used']})")
 
     cur = section["current"]
@@ -566,23 +642,25 @@ def _render_cat1_pooh(pdf, section):
     pdf.body_text(f"Filtered runs: {cur['total_filtered']} (current) | {prv['total_filtered']} (previous)")
     pdf.ln(2)
 
-    # Display names for POOH categories
-    _pooh_labels = {"td": "TD", "rop": "ROP", "bit": "Bit", "motor": "Motor", "mwd": "MWD", "bha": "BHA", "pressure": "Pressure", "other": "Other", "unknown": "Unknown"}
-
-    # Category breakdown
-    if len(cur["breakdown"]) > 0:
-        cols = [50, 25, 25]
-        _table_header(pdf, cols, ["Category", "Count", "%"])
-        alt = False
-        for _, row in cur["breakdown"].iterrows():
-            _table_row_color(pdf, alt)
-            label = _pooh_labels.get(str(row['category']), str(row['category']))
-            pdf.cell(cols[0], 5, f"  {_latin1(label)}", fill=True)
-            pdf.cell(cols[1], 5, f"{row['count']}", align="C", fill=True)
-            pdf.cell(cols[2], 5, f"{row['pct']:.1f}%", align="C", fill=True)
-            pdf.ln()
-            alt = not alt
-        pdf.ln(3)
+    # 12-week POOH 100% stacked-bar chart (smaller embed so the Motor Issues table fits below).
+    pooh_trend = section.get("pooh_trend")
+    if pooh_trend and pooh_trend.get("weeks"):
+        try:
+            from src.trends import render_pooh_trend_chart
+            png_path = render_pooh_trend_chart(pooh_trend)
+            if png_path and os.path.exists(png_path):
+                page_w = pdf.w
+                img_w = 200  # narrower so the Motor Issues table fits on the same page
+                x = (page_w - img_w) / 2
+                pdf.image(png_path, x=x, y=pdf.get_y(), w=img_w)
+                pdf.set_y(pdf.get_y() + img_w * _CHART_ASPECT)
+                pdf.ln(2)
+                try:
+                    os.remove(png_path)
+                except OSError:
+                    pass
+        except Exception as e:
+            pdf.body_text(f"POOH chart rendering failed: {e}")
 
     # Motor issues detail
     motor_detail = cur["motor_detail"]
@@ -1233,8 +1311,13 @@ def generate_pdf(all_results, output_dir=None, report_title=None):
     if cat1:
         pdf.category_header(1, cat1["category"])
         sections = cat1["sections"]
-        _render_cat1_summary(pdf, sections["A_weekly_summary"])
+        # Page 1: Summary + Longest Run | Page 2: Trends
+        _render_cat1_summary(pdf, sections["A_weekly_summary"],
+                             trends_section=sections.get("D_trends"))
+        # Page 3: Detailed table + 1B Curves Analysis
+        _render_cat1_detailed(pdf, sections["A_weekly_summary"])
         _render_cat1_curves(pdf, sections["B_curves"])
+        # Page 4: 1C Reason to POOH + Motor Issues (forces page break internally)
         _render_cat1_pooh(pdf, sections["C_reason_pooh"])
 
     # =====================================================================

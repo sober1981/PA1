@@ -338,7 +338,7 @@ def main():
     print("\n[6/8] Running analysis...")
 
     print("  Category 1: Week vs Previous Week...")
-    cat1_results = run_category1(new_runs, prev_week, config, report_type, week=week)
+    cat1_results = run_category1(new_runs, prev_week, config, report_type, week=week, full_df=df)
 
     print("  Category 2: Monthly Highlights...")
     cat2_results = run_category2(current_month, prev_month, config, report_type)

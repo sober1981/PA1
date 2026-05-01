@@ -180,7 +180,8 @@ def _classify_pooh(reason, classifications):
     return "other"
 
 
-def section_c_reason_pooh(current_week, prev_week, config, report_type="wednesday"):
+def section_c_reason_pooh(current_week, prev_week, config, report_type="wednesday",
+                          full_df=None, week=None):
     """
     Section C: Reason to POOH breakdown
     Filter: SOURCE in [Motor_KPI, CAM_Run_Tracker]
@@ -257,14 +258,43 @@ def section_c_reason_pooh(current_week, prev_week, config, report_type="wednesda
     current = _analyze_pooh(current_week)
     previous = _analyze_pooh(prev_week)
 
+    # 12-week POOH trend for the bar chart in Cat 1C (all sources, no filter).
+    pooh_trend = None
+    if full_df is not None and week is not None:
+        try:
+            from src.trends import compute_pooh_trend
+            pooh_trend = compute_pooh_trend(
+                full_df, week, num_weeks=12, config=config,
+                report_type=report_type, apply_source_filter=False,
+            )
+        except Exception as e:
+            print(f"  WARNING: POOH trend computation failed: {e}")
+
     return {
         "reason_col_used": reason_col,
         "current": current,
         "previous": previous,
+        "pooh_trend": pooh_trend,
     }
 
 
-def run_category1(current_week, prev_week, config, report_type="wednesday", week=None):
+def section_d_trends(full_df, week, config, num_weeks=12):
+    """Section D/E data: 12-week trends of Total Drill and # of Runs by Hole Size.
+    All hole sizes included (stacked area handles many bands cleanly)."""
+    if full_df is None or week is None:
+        return None
+    try:
+        from src.trends import compute_trends
+        return compute_trends(
+            full_df, week, num_weeks=num_weeks, config=config,
+            max_hole_size=None, min_weeks_present=None,
+        )
+    except Exception as e:
+        print(f"  WARNING: trend computation failed: {e}")
+        return None
+
+
+def run_category1(current_week, prev_week, config, report_type="wednesday", week=None, full_df=None):
     """Run all Category 1 analyses."""
     if not config.get("category1", {}).get("enabled", True):
         return None
@@ -274,6 +304,8 @@ def run_category1(current_week, prev_week, config, report_type="wednesday", week
         "sections": {
             "A_weekly_summary": section_a_weekly_summary(current_week, prev_week, config, week=week),
             "B_curves": section_b_curves(current_week, prev_week, config),
-            "C_reason_pooh": section_c_reason_pooh(current_week, prev_week, config, report_type),
+            "C_reason_pooh": section_c_reason_pooh(current_week, prev_week, config, report_type,
+                                                    full_df=full_df, week=week),
+            "D_trends": section_d_trends(full_df, week, config),
         }
     }
