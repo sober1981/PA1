@@ -24,14 +24,25 @@ Each report run produces **two attachments** that are emailed and saved to the p
 
 For step-by-step instructions, see [HOW_TO_RUN.md](HOW_TO_RUN.md).
 
-## Report Structure (v2.4)
+## Three .bat wrappers — at a glance
+
+| `.bat` file | When to use it | Launch | Prompts? | Email? |
+|---|---|---|---|---|
+| **`run_manual.bat`** | Manual Wednesday run (you double-click it) | Double-click in Explorer | Yes — file + week | Yes |
+| **`run_wednesday.bat`** | Wednesday auto safety net at 14:00 if you forgot | Task Scheduler | No — auto-detect | Yes |
+| **`run_friday.bat`** | Official Friday report at 10:00 | Task Scheduler | No — uses Wed-saved state | Yes |
+
+All three call `run_agent.py` with different `--report` flags and run modes.
+See [HOW_TO_RUN.md](HOW_TO_RUN.md) for the full per-bat behavior matrix.
+
+## Report Structure (v2.5)
 
 The report is organized into 4 categories:
 
 ### Category 1: Week vs Previous Week
 | Section | Description |
 |---------|-------------|
-| **A - Weekly Summary (KPI tables)** | Three per-hole-size tables: **Summary** (totals + diff vs prev week, with green/yellow/red gradients), **Detailed** (per MOTOR_TYPE2 / JOB_TYPE / SERIES 20 with motor-type fills + per-hole-size winner highlight), **Longest Run** (single row per hole size with JOB_NUM \| OPERATOR \| Phase_CALC \| BEND_HSG comment). Same tables exported as a standalone Excel. |
+| **A - Weekly Summary (KPI tables)** | Three per-hole-size tables: **Summary** (totals + diff vs prev week, with green/yellow/red gradients on Total Runs/Hrs/Drill, reversed gradient on Total Incidents, red/green diff fonts, and an `OP w/ More Runs` column in `EXXON (4)` format), **Detailed** (per MOTOR_TYPE2 / JOB_TYPE / SERIES 20 with motor-type fills, per-hole-size winner highlight, and per-row `OP w/ More Runs`), **Longest Run** (sorted by Total Drill descending, with Operator / Job Number / Phase / Bend as separate columns). Same tables exported as a standalone Excel. |
 | **B - Curves Analysis** | 1-run curves (best outcome) vs multi-run curves. Flags operators. SOURCE = Motor_KPI only. |
 | **C - Reason to POOH** | Breakdown by classification (TD, ROP, Bit, Motor, MWD, BHA, Pressure, Other). Motor detail shows Operator, Hole Size, and SN. Wednesday uses REASON_POOH, Friday uses REASON_POOH_QC. |
 
@@ -226,6 +237,7 @@ scorecard-pa/
 - [x] Failure notification emails (v2.2 -- always get an email on Friday)
 - [x] QC Audit snapshot fix + Wednesday scheduled task + HOW_TO_RUN guide (v2.3)
 - [x] Weekly KPI Summary tables -- Summary / Detailed / Longest Run, in PDF Cat 1A and as standalone Excel; interactive week picker for manual runs (v2.4)
+- [x] OP w/ More Runs column (Summary + Detailed); Longest Run sorted by Total Drill with Operator / Job Number / Phase / Bend split out of the comment (v2.5)
 - [ ] Force Friday to use same week as Wednesday (prevent week drift from extra rows)
 - [ ] Friday executive summary PDF (concise, management-ready)
 - [ ] QC Audit historical trends (track QC workload week over week)

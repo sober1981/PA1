@@ -4,10 +4,12 @@
 
 Every PA1 run generates **two attachments**:
 - **PDF**: full performance report (Categories 1, 2, 3, and 4 on Friday).
-  Category 1A now includes three KPI tables: **Summary**, **Detailed**,
-  and **Longest Run** (per hole size).
-- **Excel**: Weekly KPI Summary (the same three tables in a standalone
-  workbook for QC and side-by-side comparison).
+  Category 1A includes three KPI tables: **Summary**, **Detailed**, and
+  **Longest Run** — with motor-type fills, a green-yellow-red gradient
+  on the Summary numeric columns, red/green diff fonts, and a per-row
+  **OP w/ More Runs** column showing the operator with the most runs.
+- **Excel**: standalone Weekly KPI Summary with the same three tables
+  for QC and side-by-side comparison.
 
 Both files are emailed to `jsoberanes@scoutdownhole.com` and saved to
 the project folder.
@@ -20,7 +22,52 @@ the project folder.
 
 ---
 
-## Manual Wednesday Report — the fast way
+## The three `.bat` files at a glance
+
+PA1 has three batch wrappers. Pick the one that matches your situation:
+
+| `.bat` file | When to use it | How it's launched | Prompts? | Email? | Logs to file? |
+|---|---|---|---|---|---|
+| **`run_manual.bat`** | Manual Wednesday run (you double-click it) | Double-click in Explorer | Yes — file + week | Yes | No (visible in console) |
+| **`run_wednesday.bat`** | Wednesday auto safety net at 14:00 if you forgot | Windows Task Scheduler | No (auto-detect) | Yes | Yes — `logs\wednesday_YYYYMMDD.log` |
+| **`run_friday.bat`** | Official Friday report at 10:00 | Windows Task Scheduler | No (uses Wed-saved state) | Yes | Yes — `logs\friday_YYYYMMDD.log` |
+
+All three call the same entry point — `run_agent.py` — but with different flags and run modes.
+
+### Detailed differences
+
+| Behavior | `run_manual.bat` | `run_wednesday.bat` | `run_friday.bat` |
+|---|---|---|---|
+| Python flag passed | `--report wednesday` | `--report wednesday` | `--report friday` |
+| TTY (terminal) | Yes (interactive) | No (scheduled, headless) | No (scheduled, headless) |
+| Window stays open | Yes (`pause` at end) | N/A — runs hidden | N/A — runs hidden |
+| Output redirected to log | No (you see it on screen) | Yes — `logs\wednesday_*.log` | Yes — `logs\friday_*.log` |
+| Failure-email fallback | No (you'd see the error) | Yes — emails the last 2,000 chars of the log | Yes — emails the last 2,000 chars of the log |
+| File source | Interactive picker (lists local masters) | Auto-detect latest local master | Reads `state\last_run.json` and finds the same Wednesday filename in Teams sync |
+| Week | Interactive picker (10 most recent) | Auto-detect latest week in data | Auto-detect latest week in data |
+| "Skip if already run today" guard | No — you can always re-run | Yes — if Wednesday state is already saved for today, the scheduled task exits silently | No |
+| Pre-QC snapshot saved | Yes — `state\wednesday_snapshot.xlsx` | Yes — `state\wednesday_snapshot.xlsx` | No (uses the existing snapshot) |
+| State file `state\last_run.json` written | Yes — used by Friday | Yes — used by Friday | No (only reads it) |
+| Categories rendered | 1, 2, 3 | 1, 2, 3 | 1, 2, 3, **4 (QC Audit)** |
+| POOH column used | `REASON_POOH` (raw) | `REASON_POOH` (raw) | `REASON_POOH_QC` (post-QC) |
+
+### Why three files instead of one?
+
+- **`run_manual.bat`** is *interactive*: it does NOT redirect output to a
+  log file (so you can see prompts and answer them) and it pauses at the
+  end so you can read the result before the window closes.
+- **`run_wednesday.bat`** and **`run_friday.bat`** are *unattended*: they
+  redirect everything to a log file, run hidden (no console), and email
+  a failure notification if anything goes wrong. They have no prompts to
+  answer because there's no user there.
+
+A single bat file can't cleanly do both modes — interactive prompts can't
+be answered when stdin is redirected to a log, and a paused window
+doesn't make sense for a scheduled task that has to run at 2 AM.
+
+---
+
+## Manual Wednesday Report — the easy way
 
 **Double-click `run_manual.bat`** in File Explorer:
 ```
@@ -88,7 +135,7 @@ Skip the email too:
 
 ---
 
-## Automatic Safety Net (Wednesday)
+## Automatic Wednesday Safety Net
 
 If you forget to run the Wednesday report, it auto-runs at **2:00 PM on
 Wednesdays** via Windows Task Scheduler (`run_wednesday.bat`). It:
@@ -108,8 +155,10 @@ non-interactive run**. You can always re-run manually any time.
 The Friday report runs automatically every **Friday at 10:00 AM** via
 Task Scheduler (`run_friday.bat`). No action needed. It:
 
-- Picks the QC'd version of Wednesday's master file from Teams sync.
+- Reads `state\last_run.json` to find the same Wednesday filename.
+- Finds the **QC'd version** of that file in the Teams sync folder.
 - Compares it against the Wednesday snapshot (Category 4: QC Audit).
+- Uses `REASON_POOH_QC` (the cleaned column) instead of `REASON_POOH`.
 - Emails PDF + KPI Excel with all 4 categories.
 
 To run Friday manually if needed:
@@ -181,3 +230,19 @@ The console window stays open (`pause` at end). Read the error message:
 - **`SharePoint connection failed (MFA)`** — pick option `[1] Latest LOCAL` instead, or use the OneDrive-synced file.
 - **`Cannot find ... in Teams sync` (Friday)** — the QC'd version isn't synced yet. Wait for the Teams sync to complete, or run with `--file` pointing to the right path.
 - **Anything else** — paste the last 10–20 lines of the console into a chat with Claude and I'll debug.
+
+---
+
+## If a scheduled run fails
+
+You'll receive a `PA1 - REPORT FAILED (timestamp)` email automatically,
+containing the last 2,000 characters of the corresponding log file. Open
+the full log here:
+
+```
+C:\Users\jsoberanes\Projects\scorecard-pa\logs\wednesday_YYYYMMDD.log
+C:\Users\jsoberanes\Projects\scorecard-pa\logs\friday_YYYYMMDD.log
+```
+
+To re-run manually after a failure: use `run_manual.bat` (Wednesday) or
+the `run_agent.py --report friday` command (Friday).
