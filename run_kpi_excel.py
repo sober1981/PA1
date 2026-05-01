@@ -26,7 +26,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.data_loader import (
     load_config,
     find_master_file_local,
-    find_master_file_sharepoint,
     find_master_file_interactive,
     _copy_to_temp,
     load_and_clean,
@@ -40,15 +39,15 @@ from src.weekly_kpi_excel import write_kpi_excel
 
 def _choose_source_interactive():
     print("\n  Select master file source:")
-    print("    [1] Latest LOCAL file (OneDrive sync, fastest)")
-    print("    [2] SharePoint - latest update (downloads via auth)")
-    print("    [3] Browse local files (pick from list)")
-    choice = input("  > ").strip()
-    if choice in ("", "1"):
+    print("    [1] Local  -- your OneDrive copy (pre-QC, fastest)")
+    print("    [2] Shared -- Teams sync (post-QC, latest)")
+    print("    [3] Browse -- pick any file from a list (all paths)")
+    choice = input("  > ").strip().lower()
+    if choice in ("", "1", "local"):
         return "local"
-    if choice == "2":
-        return "sharepoint"
-    if choice == "3":
+    if choice in ("2", "shared"):
+        return "shared"
+    if choice in ("3", "browse"):
         return "browse"
     print(f"  Unrecognized choice '{choice}', defaulting to local.")
     return "local"
@@ -57,21 +56,16 @@ def _choose_source_interactive():
 def _resolve_master_file(source, config):
     """Return (read_path, original_filename, display_path) for the chosen source."""
     if source == "local":
-        local_path = find_master_file_local(config)
+        local_path = find_master_file_local(config, scope="local")
         return _copy_to_temp(local_path), os.path.basename(local_path), local_path
 
-    if source == "sharepoint":
-        result = find_master_file_sharepoint(config)
-        if result is None:
-            print("  SharePoint failed. Falling back to latest local file.")
-            local_path = find_master_file_local(config)
-            return _copy_to_temp(local_path), os.path.basename(local_path), local_path
-        read_path, original = result
-        return read_path, original, f"(SharePoint) {original}"
+    if source == "shared":
+        shared_path = find_master_file_local(config, scope="shared")
+        return _copy_to_temp(shared_path), os.path.basename(shared_path), shared_path
 
     if source == "browse":
-        local_path, original = find_master_file_interactive(config)
-        return _copy_to_temp(local_path), original, local_path
+        any_path, original = find_master_file_interactive(config, scope="all")
+        return _copy_to_temp(any_path), original, any_path
 
     raise ValueError(f"Unknown source: {source}")
 
@@ -155,8 +149,9 @@ def _confirm_file(original, display_path):
 
 def main():
     parser = argparse.ArgumentParser(description="PA1 - Weekly KPI Summary Excel")
-    parser.add_argument("--source", choices=["local", "sharepoint", "browse"], default=None,
-                        help="Master file source. Omit for interactive prompt.")
+    parser.add_argument("--source", choices=["local", "shared", "browse"], default=None,
+                        help="Master file source: 'local' (OneDrive), 'shared' (Teams sync), or 'browse'. "
+                             "Omit for interactive prompt.")
     parser.add_argument("--week", type=str, default=None, help="Week (e.g., 26-W15)")
     parser.add_argument("--date-range", nargs=2, type=str, default=None,
                         metavar=("START", "END"))

@@ -8,7 +8,7 @@ cd /d "C:\Users\jsoberanes\Projects\scorecard-pa"
 
 set LOGFILE=C:\Users\jsoberanes\Projects\scorecard-pa\logs\wednesday_%date:~-4%%date:~4,2%%date:~7,2%.log
 
-"C:\Users\jsoberanes\AppData\Local\Programs\Python\Python313\python.exe" run_agent.py --report wednesday >> "%LOGFILE%" 2>&1
+"C:\Users\jsoberanes\AppData\Local\Programs\Python\Python313\python.exe" run_agent.py --report wednesday --source local >> "%LOGFILE%" 2>&1
 
 if %ERRORLEVEL% NEQ 0 (
     echo [%date% %time%] Report failed with exit code %ERRORLEVEL% >> "%LOGFILE%"

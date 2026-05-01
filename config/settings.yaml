@@ -9,8 +9,15 @@ sharepoint:
   # Exclude files with these substrings in filename
   exclude_patterns: ["Downloaded", "TEST", "backup", "original", "back up"]
 
-# Local file search (Teams-synced folder first, then personal Scorecard folder)
+# Local vs Shared file search.
+#   - local_paths  = your personal OneDrive copy (pre-QC, won't be touched by team)
+#   - shared_paths = Teams-synced folder (post-QC, the file the team edits)
+# search_paths is the union of both, kept for any code still using it.
 data:
+  local_paths:
+    - "C:\\Users\\jsoberanes\\OneDrive - Scout Downhole\\Drilling Opt Projects\\Scorecard"
+  shared_paths:
+    - "C:\\Users\\jsoberanes\\Scout Downhole\\DB Runs Update - Documents\\General"
   search_paths:
     - "C:\\Users\\jsoberanes\\Scout Downhole\\DB Runs Update - Documents\\General"
     - "C:\\Users\\jsoberanes\\OneDrive - Scout Downhole\\Drilling Opt Projects\\Scorecard"

@@ -22,15 +22,34 @@ the project folder.
 
 ---
 
+## Local vs Shared file source
+
+PA1 distinguishes two file sources:
+
+- **Local** — your **OneDrive personal copy** at
+  `OneDrive - Scout Downhole\Drilling Opt Projects\Scorecard\...`. The team
+  doesn't edit this — it stays as the **pre-QC** version. Use this for the
+  Wednesday "first look" snapshot.
+- **Shared** — the **Teams-synced folder** at
+  `Scout Downhole\DB Runs Update - Documents\General\...`. The team edits
+  this directly during QC, so it becomes the **post-QC** version. Use this
+  on Friday for the QC'd report.
+
+The whole Wed→Fri workflow only works correctly if Wednesday snapshots from
+**Local** and Friday compares against **Shared**. Otherwise Cat 4's QC Audit
+will show no changes.
+
+---
+
 ## The three `.bat` files at a glance
 
 PA1 has three batch wrappers. Pick the one that matches your situation:
 
 | `.bat` file | When to use it | How it's launched | Prompts? | Email? | Logs to file? |
 |---|---|---|---|---|---|
-| **`run_manual.bat`** | Manual Wednesday run (you double-click it) | Double-click in Explorer | Yes — file + week | Yes | No (visible in console) |
-| **`run_wednesday.bat`** | Wednesday auto safety net at 14:00 if you forgot | Windows Task Scheduler | No (auto-detect) | Yes | Yes — `logs\wednesday_YYYYMMDD.log` |
-| **`run_friday.bat`** | Official Friday report at 10:00 | Windows Task Scheduler | No (uses Wed-saved state) | Yes | Yes — `logs\friday_YYYYMMDD.log` |
+| **`run_manual.bat`** | Manual Wednesday run (you double-click it) | Double-click in Explorer | Yes — Local/Shared, file, week | Yes | No (visible in console) |
+| **`run_wednesday.bat`** | Wednesday auto safety net at 14:00 if you forgot | Windows Task Scheduler | No (auto-detect Local) | Yes | Yes — `logs\wednesday_YYYYMMDD.log` |
+| **`run_friday.bat`** | Official Friday report at 10:00 | Windows Task Scheduler | No (auto-find in Shared) | Yes | Yes — `logs\friday_YYYYMMDD.log` |
 
 All three call the same entry point — `run_agent.py` — but with different flags and run modes.
 
@@ -38,14 +57,16 @@ All three call the same entry point — `run_agent.py` — but with different fl
 
 | Behavior | `run_manual.bat` | `run_wednesday.bat` | `run_friday.bat` |
 |---|---|---|---|
-| Python flag passed | `--report wednesday` | `--report wednesday` | `--report friday` |
+| Python flag passed | `--report wednesday` | `--report wednesday --source local` | `--report friday --source shared` |
 | TTY (terminal) | Yes (interactive) | No (scheduled, headless) | No (scheduled, headless) |
 | Window stays open | Yes (`pause` at end) | N/A — runs hidden | N/A — runs hidden |
 | Output redirected to log | No (you see it on screen) | Yes — `logs\wednesday_*.log` | Yes — `logs\friday_*.log` |
 | Failure-email fallback | No (you'd see the error) | Yes — emails the last 2,000 chars of the log | Yes — emails the last 2,000 chars of the log |
-| File source | Interactive picker (lists local masters) | Auto-detect latest local master | Reads `state\last_run.json` and finds the same Wednesday filename in Teams sync |
-| Week | Interactive picker (10 most recent) | Auto-detect latest week in data | Auto-detect latest week in data |
+| Local / Shared prompt | **Yes — defaults to Local. Picking Shared triggers a warning + confirmation.** | No — forced to Local | No — forced to Shared |
+| File picker | Interactive list of files in chosen scope | Auto-detect latest Local file | Finds Wednesday's filename in Shared (Teams sync) |
+| Week picker | Yes (10 most recent weeks in data) | No — auto-detect latest week | No — auto-detect latest week |
 | "Skip if already run today" guard | No — you can always re-run | Yes — if Wednesday state is already saved for today, the scheduled task exits silently | No |
+| Friday fallback if Shared file missing | n/a | n/a | Warns and (non-TTY) auto-falls back to Local |
 | Pre-QC snapshot saved | Yes — `state\wednesday_snapshot.xlsx` | Yes — `state\wednesday_snapshot.xlsx` | No (uses the existing snapshot) |
 | State file `state\last_run.json` written | Yes — used by Friday | Yes — used by Friday | No (only reads it) |
 | Categories rendered | 1, 2, 3 | 1, 2, 3 | 1, 2, 3, **4 (QC Audit)** |
@@ -74,9 +95,21 @@ doesn't make sense for a scheduled task that has to run at 2 AM.
 C:\Users\jsoberanes\Projects\scorecard-pa\run_manual.bat
 ```
 
-A console window opens. You'll be prompted twice:
+A console window opens. You'll be prompted three times:
 
-### Prompt 1 — pick the master file
+### Prompt 1 — Local or Shared?
+```
+  Local or Shared file source?
+    [1] Local  -- your OneDrive copy (pre-QC, won't be touched by team)
+    [2] Shared -- Teams sync (post-QC, the file the team edits)
+    [Enter] = local (option 1)
+  >
+```
+Press Enter (or type `1`) for Local. **Pick Shared only if you understand
+that Friday's QC Audit will then show no changes.** If you do pick Shared,
+PA1 prompts again to confirm.
+
+### Prompt 2 — pick the master file
 ```
   Found N master file(s):
 
@@ -89,7 +122,7 @@ A console window opens. You'll be prompted twice:
 ```
 Type the number (usually `1`) and press Enter.
 
-### Prompt 2 — pick the week
+### Prompt 3 — pick the week
 ```
   Available weeks (most recent first):
     [1] 26-W17  (2026-04-20 to 2026-04-26)  - 57 runs
@@ -124,9 +157,13 @@ You get the same two prompts (file + week).
 ## Skip prompts (specify everything via flags)
 
 ```
-"C:\...\python.exe" run_agent.py --report wednesday --week 26-W17 --file "path\to\master.xlsx"
+"C:\...\python.exe" run_agent.py --report wednesday --source local --week 26-W17 --file "path\to\master.xlsx"
 ```
 Or just one flag — whichever is given skips its prompt; the others still ask.
+
+The `--source` flag accepts:
+- `local` — search the OneDrive personal-copy paths (`local_paths` in `config\settings.yaml`)
+- `shared` — search the Teams-synced paths (`shared_paths`)
 
 Skip the email too:
 ```

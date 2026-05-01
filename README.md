@@ -24,16 +24,24 @@ Each report run produces **two attachments** that are emailed and saved to the p
 
 For step-by-step instructions, see [HOW_TO_RUN.md](HOW_TO_RUN.md).
 
+## Local vs Shared file source
+
+PA1 splits the master-file search into two sources:
+
+- **Local** — `OneDrive - Scout Downhole\Drilling Opt Projects\Scorecard\...` (your personal copy, **pre-QC**, untouched by team)
+- **Shared** — `Scout Downhole\DB Runs Update - Documents\General\...` (Teams sync, **post-QC**, the file the team edits)
+
+Wednesday must read Local; Friday must read Shared. Otherwise Cat 4's QC Audit shows no changes. The scheduled `.bat` files enforce this; `run_manual.bat` asks you and warns if you pick Shared on a Wednesday run.
+
 ## Three .bat wrappers — at a glance
 
-| `.bat` file | When to use it | Launch | Prompts? | Email? |
-|---|---|---|---|---|
-| **`run_manual.bat`** | Manual Wednesday run (you double-click it) | Double-click in Explorer | Yes — file + week | Yes |
-| **`run_wednesday.bat`** | Wednesday auto safety net at 14:00 if you forgot | Task Scheduler | No — auto-detect | Yes |
-| **`run_friday.bat`** | Official Friday report at 10:00 | Task Scheduler | No — uses Wed-saved state | Yes |
+| `.bat` file | When to use it | Launch | Source | Prompts? | Email? |
+|---|---|---|---|---|---|
+| **`run_manual.bat`** | Manual Wednesday run (double-click) | Explorer | **Asks** Local/Shared (default Local) | Yes — Local/Shared, file, week | Yes |
+| **`run_wednesday.bat`** | Wednesday auto safety net at 14:00 | Task Scheduler | **Forced Local** | No — auto-detect | Yes |
+| **`run_friday.bat`** | Official Friday report at 10:00 | Task Scheduler | **Forced Shared** | No — finds Wed's filename in Teams sync | Yes |
 
-All three call `run_agent.py` with different `--report` flags and run modes.
-See [HOW_TO_RUN.md](HOW_TO_RUN.md) for the full per-bat behavior matrix.
+All three call `run_agent.py` with different flags. See [HOW_TO_RUN.md](HOW_TO_RUN.md) for the full per-bat behavior matrix and the `--source local|shared` CLI flag.
 
 ## Report Structure (v2.5)
 

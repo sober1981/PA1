@@ -19,8 +19,8 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.data_loader import (
-    load_config, find_master_file, find_master_file_interactive,
-    find_master_file_local, find_master_file_sharepoint,
+    load_config, find_master_file_interactive,
+    find_master_file_local,
     find_file_by_name, _copy_to_temp, load_and_clean,
     filter_new_runs, filter_previous_week,
     filter_current_month, filter_previous_month,
@@ -58,20 +58,22 @@ def _build_report_title(report_type, week_start, week_end, week, master_filename
     return f"PA1 - {prefix} Report {mon_str} to {sun_str} / Week {week_num} / {basename}"
 
 
-def _choose_source_interactive():
-    print("\n  Select master file source:")
-    print("    [1] Latest LOCAL file (OneDrive sync, fastest)")
-    print("    [2] SharePoint - latest update (downloads via auth)")
-    print("    [3] Browse local files (pick from list)")
-    choice = input("  > ").strip()
-    if choice in ("", "1"):
+def _choose_scope_interactive(default="local"):
+    """Ask Local or Shared. Returns 'local' or 'shared'."""
+    print("\n  Local or Shared file source?")
+    print("    [1] Local  -- your OneDrive copy (pre-QC, won't be touched by team)")
+    print("    [2] Shared -- Teams sync (post-QC, the file the team edits)")
+    default_label = "1" if default == "local" else "2"
+    print(f"    [Enter] = {default} (option {default_label})")
+    choice = input("  > ").strip().lower()
+    if choice == "":
+        return default
+    if choice == "1" or choice == "local":
         return "local"
-    if choice == "2":
-        return "sharepoint"
-    if choice == "3":
-        return "browse"
-    print(f"  Unrecognized choice '{choice}', defaulting to local.")
-    return "local"
+    if choice == "2" or choice == "shared":
+        return "shared"
+    print(f"  Unrecognized choice '{choice}', defaulting to {default}.")
+    return default
 
 
 def _confirm_file(original, display_path):
@@ -155,6 +157,9 @@ def main():
     parser.add_argument("--date-range", nargs=2, type=str, default=None, metavar=("START", "END"),
                         help="Date range (e.g., 2026-02-09 2026-02-15)")
     parser.add_argument("--file", type=str, default=None, help="Path to master Excel file")
+    parser.add_argument("--source", choices=["local", "shared"], default=None,
+                        help="Which paths to search: 'local' (OneDrive) or 'shared' (Teams). "
+                             "Defaults: wednesday=local, friday=shared. Skips the Local/Shared prompt.")
     parser.add_argument("--config", type=str, default=None, help="Path to config file")
     parser.add_argument("--pdf", action="store_true", default=False, help="Generate PDF report")
     parser.add_argument("--no-email", action="store_true", default=False, help="Skip sending email")
@@ -189,7 +194,6 @@ def main():
 
     elif report_type == "wednesday":
         # Skip-if-already-generated-today guard: only for scheduled (non-TTY) runs.
-        # Manual / interactive runs are always allowed to re-generate.
         if args.report and not sys.stdin.isatty():
             wed_state = load_wednesday_state()
             if wed_state and wed_state.get("saved_at", ""):
@@ -199,46 +203,84 @@ def main():
                     print("  Wednesday report already generated today. Skipping.")
                     sys.exit(0)
 
-        # Interactive if stdin is a terminal, otherwise auto-detect
-        if sys.stdin.isatty():
-            print("  Wednesday report -- interactive file selection")
-            local_path, original_filename = find_master_file_interactive(config)
+        # Determine scope: --source flag wins, else TTY prompt (default local), else local.
+        if args.source:
+            scope = args.source
+            print(f"  Wednesday report -- source: {scope} (from --source flag)")
+        elif sys.stdin.isatty():
+            scope = _choose_scope_interactive(default="local")
+            if scope == "shared":
+                print("\n  WARNING: You picked Shared for a Wednesday run.")
+                print("  The snapshot will be the post-QC version, so Friday's Cat 4 audit")
+                print("  will show no changes against this snapshot.")
+                confirm = input("  Continue anyway? [y/N]: ").strip().lower()
+                if confirm not in ("y", "yes"):
+                    print("  Aborted by user.")
+                    sys.exit(0)
         else:
-            print("  Wednesday report -- auto-detecting latest master file")
-            read_path, original_filename = find_master_file(config)
-            local_path = read_path  # For state tracking
+            scope = "local"
+            print(f"  Wednesday report -- source: local (auto)")
+
+        if sys.stdin.isatty():
+            print(f"  Wednesday report -- interactive file selection ({scope})")
+            local_path, original_filename = find_master_file_interactive(config, scope=scope)
+        else:
+            print(f"  Wednesday report -- auto-detecting latest {scope} master file")
+            local_path = find_master_file_local(config, scope=scope)
+            original_filename = os.path.basename(local_path)
 
         wednesday_filepath = local_path  # Save original path for Friday QC audit
         read_path = _copy_to_temp(local_path)
 
     elif report_type == "friday":
-        # Friday: auto-find the QC'd version of Wednesday's file in Teams sync
+        # Friday: find the QC'd version of Wednesday's file in the Shared (Teams) folder.
+        scope = args.source or "shared"
         wed_state = load_wednesday_state()
         wed_pre_qc_path = None  # For QC audit
         if wed_state:
             target = wed_state["wednesday_filename"]
             wed_pre_qc_path = wed_state.get("wednesday_snapshot") or wed_state.get("wednesday_filepath")
-            print(f"  Friday report -- looking for QC'd version of: {target}")
-            teams_path = find_file_by_name(config, target)
+            print(f"  Friday report -- looking for '{target}' in {scope} paths")
+            teams_path = find_file_by_name(config, target, scope=scope)
             if teams_path:
                 from datetime import datetime as dt
                 mtime = dt.fromtimestamp(os.path.getmtime(teams_path)).strftime("%Y-%m-%d %H:%M")
-                print(f"  Found in Teams sync: {teams_path}")
-                print(f"  Modified: {mtime} (QC'd version)")
+                print(f"  Found: {teams_path}")
+                print(f"  Modified: {mtime}")
                 read_path = _copy_to_temp(teams_path)
                 original_filename = os.path.basename(teams_path)
             else:
-                print(f"  WARNING: Could not find '{target}' in Teams sync.")
-                print(f"  Falling back to auto-detect...")
-                read_path, original_filename = find_master_file(config)
+                print(f"  WARNING: '{target}' not found in {scope} paths.")
+                # Fallback to local — warn + confirm if TTY
+                fallback = "local" if scope == "shared" else "shared"
+                if sys.stdin.isatty():
+                    confirm = input(f"  Fall back to {fallback}? [Y/n]: ").strip().lower()
+                    if confirm not in ("", "y", "yes"):
+                        print("  Aborted by user.")
+                        sys.exit(0)
+                else:
+                    print(f"  Falling back to {fallback} (non-interactive).")
+                fallback_path = find_file_by_name(config, target, scope=fallback)
+                if fallback_path:
+                    read_path = _copy_to_temp(fallback_path)
+                    original_filename = os.path.basename(fallback_path)
+                else:
+                    print(f"  Not found in {fallback} either. Auto-detecting latest in any scope...")
+                    local_path_any = find_master_file_local(config, scope="all")
+                    read_path = _copy_to_temp(local_path_any)
+                    original_filename = os.path.basename(local_path_any)
         else:
             print("  WARNING: No Wednesday state found. Run Wednesday report first.")
-            print("  Falling back to auto-detect...")
-            read_path, original_filename = find_master_file(config)
+            print(f"  Falling back to auto-detect latest from {scope} paths...")
+            local_path_fb = find_master_file_local(config, scope=scope)
+            read_path = _copy_to_temp(local_path_fb)
+            original_filename = os.path.basename(local_path_fb)
 
     else:
-        # Ad-hoc run: auto-detect
-        read_path, original_filename = find_master_file(config)
+        # Ad-hoc run: auto-detect across all paths
+        local_path_any = find_master_file_local(config, scope="all")
+        read_path = _copy_to_temp(local_path_any)
+        original_filename = os.path.basename(local_path_any)
 
     # =========================================================================
     # [3/8] Load and clean data

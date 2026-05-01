@@ -24,6 +24,30 @@ def load_config(config_path=None):
         return yaml.safe_load(f)
 
 
+def _resolve_paths(config, scope="all"):
+    """Return list of search paths based on scope.
+    scope: 'local' (OneDrive personal copy), 'shared' (Teams sync), or 'all' (union)."""
+    data_cfg = config.get("data", {})
+    if scope == "local":
+        paths = data_cfg.get("local_paths") or []
+        if not paths:
+            paths = data_cfg.get("search_paths", [])
+        return paths
+    if scope == "shared":
+        paths = data_cfg.get("shared_paths") or []
+        if not paths:
+            paths = data_cfg.get("search_paths", [])
+        return paths
+    # "all" - union of local and shared (preserves order: local first, then shared)
+    paths = list(data_cfg.get("local_paths") or [])
+    for p in (data_cfg.get("shared_paths") or []):
+        if p not in paths:
+            paths.append(p)
+    if not paths:
+        paths = data_cfg.get("search_paths", [])
+    return paths
+
+
 def find_master_file_sharepoint(config):
     """
     Find and download the latest MASTER_MCS_MERGE file from SharePoint.
@@ -108,16 +132,16 @@ def find_master_file_sharepoint(config):
         return None
 
 
-def find_master_file_local(config):
+def find_master_file_local(config, scope="all"):
     """
-    Find the most recent MASTER_MCS_MERGE file by searching the local
-    OneDrive-synced Scorecard folder recursively.
+    Find the most recent MASTER_MCS_MERGE file by searching the configured paths.
+    scope: 'local' (OneDrive only), 'shared' (Teams sync only), or 'all' (both).
     """
     pattern = config["data"]["file_pattern"]
     exclude_patterns = config["sharepoint"].get("exclude_patterns", [])
     candidates = []
 
-    for search_path in config["data"]["search_paths"]:
+    for search_path in _resolve_paths(config, scope):
         if config["data"].get("recursive", False):
             # Recursive search
             full_pattern = os.path.join(search_path, "**", pattern)
@@ -152,15 +176,16 @@ def find_master_file_local(config):
     return selected
 
 
-def find_file_by_name(config, target_filename):
+def find_file_by_name(config, target_filename, scope="all"):
     """
-    Search all configured paths for a specific filename.
+    Search configured paths for a specific filename.
+    scope: 'local', 'shared', or 'all'.
     Used by Friday runs to find the QC'd Teams version of the Wednesday file.
     Returns the full path if found, None otherwise.
     """
     exclude_patterns = config["sharepoint"].get("exclude_patterns", [])
 
-    for search_path in config["data"]["search_paths"]:
+    for search_path in _resolve_paths(config, scope):
         if config["data"].get("recursive", False):
             full_pattern = os.path.join(search_path, "**", target_filename)
             matches = glob.glob(full_pattern, recursive=True)
@@ -181,17 +206,18 @@ def find_file_by_name(config, target_filename):
     return None
 
 
-def find_master_file_interactive(config):
+def find_master_file_interactive(config, scope="all"):
     """
     Interactive file selection for Wednesday runs.
-    Lists available MASTER_MCS_MERGE files and lets the user pick one.
+    Lists available MASTER_MCS_MERGE files in the chosen scope and lets the
+    user pick one. scope: 'local', 'shared', or 'all'.
     Returns (file_path, original_filename) tuple.
     """
     pattern = config["data"]["file_pattern"]
     exclude_patterns = config["sharepoint"].get("exclude_patterns", [])
     candidates = []
 
-    for search_path in config["data"]["search_paths"]:
+    for search_path in _resolve_paths(config, scope):
         if config["data"].get("recursive", False):
             full_pattern = os.path.join(search_path, "**", pattern)
             matches = glob.glob(full_pattern, recursive=True)
