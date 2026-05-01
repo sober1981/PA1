@@ -1,0 +1,137 @@
+# =============================================================================
+# PCR — Performance Calculator and Ranking
+# =============================================================================
+# Methodology reference: docs/pcr.md
+# Implementation:        src/pcr.py (TBD)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Absolute baseline — what data pool defines "the universe of peer runs".
+# -----------------------------------------------------------------------------
+absolute_baseline:
+  scope: from_date           # use all runs with DATE_OUT >= start_date
+  start_date: "2025-01-01"   # 2025+ historical (matches PA1 Cat 3 baseline)
+
+# -----------------------------------------------------------------------------
+# Peer-group definition — multi-level fallback. Walk down until at least
+# `min_peer_runs` peers exist; if the target run has any null in a level's
+# keys, that level is skipped automatically.
+# -----------------------------------------------------------------------------
+peer_group:
+  min_peer_runs: 10
+
+  # Most-specific first → broadest last.
+  fallback_levels:
+    - id: L1
+      keys: [HOLE_SIZE, Phase_CALC, COUNTY, FORMATION, MOTOR_TYPE2, FOOTAGE_BUCKET]
+    - id: L2
+      keys: [HOLE_SIZE, Phase_CALC, COUNTY, FORMATION, FOOTAGE_BUCKET]
+    - id: L3
+      keys: [HOLE_SIZE, Phase_CALC, COUNTY, FOOTAGE_BUCKET]
+    - id: L4
+      keys: [HOLE_SIZE, Phase_CALC, COUNTY, FORMATION]
+    - id: L5
+      keys: [HOLE_SIZE, Phase_CALC, COUNTY]
+    - id: L6
+      keys: [HOLE_SIZE, Phase_CALC, BASIN]
+    - id: L7
+      keys: [HOLE_SIZE, Phase_CALC]
+
+# -----------------------------------------------------------------------------
+# FOOTAGE_BUCKET — derived column added at preprocessing.
+# Phase-specific cutoffs because "short" means different things in
+# surface vs intermediate vs lateral.
+# Multi-phase rows (e.g. "INT-CUR-LAT") get null bucket → bucket-aware
+# levels are skipped for those runs.
+# -----------------------------------------------------------------------------
+footage_bucket:
+  by_phase:
+    SUR: { short_max: 500,  long_min: 1500 }
+    INT: { short_max: 2000, long_min: 6000 }
+    CUR: { short_max: 500,  long_min: 1500 }
+    LAT: { short_max: 3000, long_min: 7000 }
+  # If the row's Phase_CALC is not in `by_phase` (e.g. multi-phase like
+  # INT-CUR-LAT), FOOTAGE_BUCKET = null.
+
+# -----------------------------------------------------------------------------
+# Rolling baseline — per peer group, average PCR over the last N days
+# before each target run's DATE_OUT. Used for "this run vs peer 1-yr avg".
+# -----------------------------------------------------------------------------
+rolling_baseline:
+  window_days: 365   # 1 year
+  min_peer_runs_for_rolling: 3   # don't compute rolling avg if too few peers in window
+
+# -----------------------------------------------------------------------------
+# Variables that contribute to the composite PCR score.
+#
+# Each variable has:
+#   column                 — column in the input DataFrame (computed columns
+#                            like SLIDE_PCT must be added by preprocessing)
+#   weight                 — relative weight (renormalized to sum to 1.0)
+#   direction              — 'higher_is_better' or 'lower_is_better'
+#   phase_only             — optional list of phases for which this metric
+#                            applies; runs outside these phases skip the
+#                            metric and its weight is redistributed.
+#   skip_when              — optional dict of conditions that skip this
+#                            metric for a given run (e.g. zero slide footage)
+# -----------------------------------------------------------------------------
+variables:
+  total_drill:
+    column: TOTAL_DRILL
+    weight: 0.50
+    direction: higher_is_better
+
+  avg_rop:
+    column: AVG_ROP
+    weight: 0.35
+    direction: higher_is_better
+
+  rotate_rop:
+    column: ROTATE_ROP
+    weight: 0.10
+    direction: higher_is_better
+
+  slide_rop:
+    column: SLIDE_ROP
+    weight: 0.05
+    direction: higher_is_better
+    # Skipped (and weight redistributed proportionally to the other metrics)
+    # whenever the run's SERIES 20 column equals "Y" — Series-20 motors are
+    # rotate-only by design, so Slide ROP is not meaningful.
+    skip_when:
+      column: "SERIES 20"
+      equals: "Y"
+
+# NOTE: Motor Yield (MY) and Sliding % are intentionally NOT in v0 PCR.
+# They can be added later by appending entries here and rebalancing weights.
+
+# -----------------------------------------------------------------------------
+# Output columns appended to the input DataFrame.
+# -----------------------------------------------------------------------------
+output:
+  score_col:        pcr_score
+  rank_col:         pcr_rank
+  band_col:         pcr_band
+  peer_level_col:   pcr_peer_level
+  peer_n_col:       pcr_peer_n
+  per_metric_prefix: pcr_      # → pcr_rop_pct, pcr_total_drill_pct, etc.
+  rolling_avg_col:  peer_avg_pcr_365d
+  delta_col:        delta_vs_365d
+
+# -----------------------------------------------------------------------------
+# Score → band thresholds (percentile of the score distribution).
+# A run's score-percentile is computed across all scored runs in the pool.
+# -----------------------------------------------------------------------------
+bands:
+  excellent: 0.85    # score percentile >= 0.85
+  good:      0.65    # >= 0.65 and < 0.85
+  average:   0.35    # >= 0.35 and < 0.65
+  # below 0.35 → "Poor"
+
+# -----------------------------------------------------------------------------
+# Filters — runs that are NOT scored at all (excluded entirely).
+# -----------------------------------------------------------------------------
+filters:
+  exclude_when:
+    null_columns: [AVG_ROP, TOTAL_DRILL]
+    sources_to_exclude: []
