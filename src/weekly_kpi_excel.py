@@ -16,23 +16,25 @@ SUMMARY_HEADERS = [
     "Week #", "Hole Size", "Total Runs", "Total Hrs",
     "Hrs Diff vs Prev Week", "% Of G total (Hrs)",
     "Total Drill", "Ftg vs Prev Week", "% Of G total (Drill)",
-    "Total Incidents",
+    "Total Incidents", "OP w/ More Runs",
 ]
+SUMMARY_LAST_COL = 11  # Summary table spans cols A..K
 
 DETAILED_HEADERS = [
     "Week #", "Hole Size", "Motor Type", "Job Type", "Series 20",
     "Total Runs", "Total Hrs", "% Of W total (Hrs)", "% Of G total (Hrs)",
     "Total Drill", "% Of W total (Drill)", "% Of G total (Drill)",
     "Drilling Hrs", "Avg ROP", "Avg Slide %", "Avg Run Length",
-    "MY Avg", "Incident Count",
+    "MY Avg", "Incident Count", "OP w/ More Runs",
 ]
-DETAILED_LAST_COL = 18  # Detailed table spans cols A..R
+DETAILED_LAST_COL = 19  # Detailed table spans cols A..S
 
-# Longest Run Table — packed sequential layout (cols A..M)
+# Longest Run Table — packed sequential layout (cols A..P)
 LONGEST_RUN_HEADERS = [
     "Week #", "Hole Size", "Motor Type", "Job Type", "Series 20",
     "Total Hrs", "Total Drill", "Drilling Hrs", "Avg ROP", "Avg Slide %",
-    "MY Avg", "Incident Count", "Comment",
+    "MY Avg", "Incident Count",
+    "Operator", "Job Number", "Phase", "Bend",
 ]
 # 1-based positions in the packed layout
 LR_COL_WEEK         = 1
@@ -47,11 +49,16 @@ LR_COL_AVG_ROP      = 9
 LR_COL_AVG_SLIDE    = 10
 LR_COL_MY_AVG       = 11
 LR_COL_INCIDENT     = 12
-LR_COL_COMMENT      = 13
-LONGEST_LAST_COL    = 13
+LR_COL_OPERATOR     = 13
+LR_COL_JOB_NUM      = 14
+LR_COL_PHASE        = 15
+LR_COL_BEND         = 16
+LONGEST_LAST_COL    = 16
 
 # Widths apply to all three tables (shared column letters).
-COL_WIDTHS = [8, 11, 13, 13, 9, 11, 11, 13, 13, 12, 14, 14, 13, 10, 12, 14, 9, 9, 70]
+# Col M (13) -> Operator in Longest Run / Drilling Hrs in Detailed.
+# Col S (19) -> Detailed's "OP w/ More Runs" (22 wide).
+COL_WIDTHS = [8, 11, 13, 13, 9, 11, 11, 13, 13, 12, 14, 14, 16, 12, 14, 10, 9, 9, 22]
 
 MOTOR_FILL = {
     "TDI CONV":   "D5E8D4",
@@ -190,6 +197,7 @@ def _write_summary_table(ws, kpi_data, start_row, week_num):
             c.font = df_font
         c = ws.cell(row=row, column=9, value=ct["g_pct_drill"]); c.number_format = "0.00%"
         ws.cell(row=row, column=10, value=ct["incident_count"])
+        ws.cell(row=row, column=11, value=ct.get("top_operator", ""))
         ws.row_dimensions[row].height = DATA_ROW_HEIGHT
         for c in range(1, len(SUMMARY_HEADERS) + 1):
             cell = ws.cell(row=row, column=c)
@@ -229,6 +237,7 @@ def _write_summary_table(ws, kpi_data, start_row, week_num):
     c.font = df_font if df_font else bold
     c = ws.cell(row=row, column=9, value=totals["g_pct_drill"]); c.font = bold; c.number_format = "0.00%"
     ws.cell(row=row, column=10, value=totals["incidents"]).font = bold
+    ws.cell(row=row, column=11, value=kpi_data.get("grand_top_operator", "")).font = bold
     ws.row_dimensions[row].height = DATA_ROW_HEIGHT
 
     # Color-scale gradients (per-hole-size rows only — excludes Grand Total)
@@ -312,6 +321,7 @@ def _write_detailed_table(ws, kpi_data, start_row, week_num):
             c = ws.cell(row=row, column=16, value=r["avg_run_length"]); c.number_format = COMMA_FMT
             ws.cell(row=row, column=17, value=r["my_avg"])
             ws.cell(row=row, column=18, value=r["incident_count"] if r["incident_count"] else None)
+            ws.cell(row=row, column=19, value=r.get("top_operator", ""))
 
             ws.row_dimensions[row].height = DATA_ROW_HEIGHT
             block_data_rows.append((row, r))
@@ -389,11 +399,15 @@ def _write_longest_run_table(ws, kpi_data, start_row, week_num):
 
     row = start_row + 1
 
+    # Collect entries and sort by Total Drill descending
+    lr_entries = []
     for block in kpi_data["blocks"]:
         lr = block.get("longest_run")
-        if not lr:
-            continue
+        if lr:
+            lr_entries.append((block["hole_size"], lr))
+    lr_entries.sort(key=lambda x: -x[1].get("total_drill", 0))
 
+    for hs, lr in lr_entries:
         mkey = _normalize_motor_key(lr.get("motor_type", ""))
         row_fill_color = MOTOR_FILL.get(mkey) if mkey else None
         if row_fill_color:
@@ -401,7 +415,7 @@ def _write_longest_run_table(ws, kpi_data, start_row, week_num):
                 ws.cell(row=row, column=c).fill = PatternFill("solid", fgColor=row_fill_color)
 
         ws.cell(row=row, column=LR_COL_WEEK, value=week_num)
-        ws.cell(row=row, column=LR_COL_HOLE_SIZE, value=block["hole_size"])
+        ws.cell(row=row, column=LR_COL_HOLE_SIZE, value=hs)
         ws.cell(row=row, column=LR_COL_MOTOR_TYPE, value=lr["motor_type"])
         ws.cell(row=row, column=LR_COL_JOB_TYPE, value=lr["job_type"])
         ws.cell(row=row, column=LR_COL_SERIES_20, value=lr["series_20"])
@@ -414,15 +428,14 @@ def _write_longest_run_table(ws, kpi_data, start_row, week_num):
         ws.cell(row=row, column=LR_COL_MY_AVG, value=lr["my_avg"])
         ws.cell(row=row, column=LR_COL_INCIDENT,
                 value=lr["incident_count"] if lr["incident_count"] else None)
-        comment_cell = ws.cell(row=row, column=LR_COL_COMMENT, value=lr.get("comment", ""))
-        comment_cell.alignment = LEFT
+        ws.cell(row=row, column=LR_COL_OPERATOR, value=lr.get("operator", ""))
+        ws.cell(row=row, column=LR_COL_JOB_NUM, value=lr.get("job_num", ""))
+        ws.cell(row=row, column=LR_COL_PHASE, value=lr.get("phase", ""))
+        ws.cell(row=row, column=LR_COL_BEND, value=lr.get("bend", ""))
 
         ws.row_dimensions[row].height = DATA_ROW_HEIGHT
 
-        # Center align except Comment
         for c in range(1, LONGEST_LAST_COL + 1):
-            if c == LR_COL_COMMENT:
-                continue
             ws.cell(row=row, column=c).alignment = CENTER
 
         row += 1

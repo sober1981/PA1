@@ -235,9 +235,10 @@ def _diff_text(value, fmt=",.0f"):
 
 def _kpi_summary_table(pdf, kpi):
     """Summary KPI table — per hole size + Grand Total."""
-    cols = [10, 18, 18, 22, 24, 22, 24, 22, 22, 22]  # 204mm
+    cols = [10, 18, 18, 22, 24, 22, 24, 22, 22, 22, 22]  # 226mm
     headers = ["Week", "Hole Size", "Total Runs", "Total Hrs", "Hrs Diff vs Prev",
-               "% G (Hrs)", "Total Drill", "Ftg vs Prev", "% G (Drill)", "Total Incidents"]
+               "% G (Hrs)", "Total Drill", "Ftg vs Prev", "% G (Drill)",
+               "Total Incidents", "OP w/ More Runs"]
     pdf.sub_title("Summary Table (per Hole Size)")
     pdf.set_x((pdf.w - sum(cols)) / 2)  # center
     _table_header(pdf, cols, headers, bg_color=(31, 78, 120))
@@ -302,6 +303,9 @@ def _kpi_summary_table(pdf, kpi):
         else:
             pdf.set_fill_color(255, 255, 255)
         pdf.cell(cols[9], 5, f"{ct['incident_count']}", align="C", fill=True)
+        # OP w/ More Runs
+        pdf.set_fill_color(255, 255, 255)
+        pdf.cell(cols[10], 5, _latin1(ct.get("top_operator", ""))[:18], align="C", fill=True)
         pdf.ln()
 
     # Grand Total row (no fill, bold, true diffs)
@@ -339,18 +343,19 @@ def _kpi_summary_table(pdf, kpi):
     pdf.set_text_color(30, 30, 30)
     pdf.cell(cols[8], 5, f"{g_pct_drill_sum*100:.1f}%", align="C", fill=True)
     pdf.cell(cols[9], 5, f"{g_inc}", align="C", fill=True)
+    pdf.cell(cols[10], 5, _latin1(kpi.get("grand_top_operator", ""))[:18], align="C", fill=True)
     pdf.ln()
     pdf.set_font("Helvetica", "", 7)
 
 
 def _kpi_detailed_table(pdf, kpi):
     """Detailed KPI table — per Motor Type / Job Type / Series 20 grouped by hole size."""
-    cols = [8, 12, 18, 16, 12, 10, 14, 12, 12, 16, 12, 12, 14, 12, 12, 16, 10, 12]  # 228mm
+    cols = [8, 12, 18, 16, 12, 10, 14, 12, 12, 16, 12, 12, 14, 12, 12, 14, 10, 12, 18]  # 246mm
     headers = ["Wk", "Hole", "Motor Type", "Job Type", "S20",
                "Runs", "Hrs", "% W Hrs", "% G Hrs",
                "Total Drill", "% W Drl", "% G Drl",
                "Drill Hrs", "Avg ROP", "Slide %", "Avg Run Len",
-               "MY Avg", "Incid"]
+               "MY Avg", "Incid", "OP w/ More Runs"]
     pdf.check_space(40)
     pdf.sub_title("Detailed Table (per Motor Type / Job Type / Series 20)")
     left_x = (pdf.w - sum(cols)) / 2
@@ -406,6 +411,7 @@ def _kpi_detailed_table(pdf, kpi):
             pdf.cell(cols[16], 4, f"{my:.1f}" if my is not None else "", align="C", fill=True)
             inc = r.get("incident_count", 0)
             pdf.cell(cols[17], 4, f"{inc}" if inc else "", align="C", fill=True)
+            pdf.cell(cols[18], 4, _latin1(r.get("top_operator", ""))[:14], align="C", fill=True)
             pdf.ln()
         # Slim spacer line between hole sizes
         pdf.ln(0.5)
@@ -413,13 +419,14 @@ def _kpi_detailed_table(pdf, kpi):
 
 
 def _kpi_longest_run_table(pdf, kpi):
-    """Longest Run table — one row per hole size, packed (no gaps)."""
-    cols = [8, 12, 18, 16, 12, 14, 18, 14, 12, 14, 10, 12, 90]  # 250mm
+    """Longest Run table — one row per hole size, sorted by Total Drill descending."""
+    cols = [8, 12, 18, 16, 10, 14, 18, 14, 12, 12, 10, 10, 22, 16, 22, 12]  # 226mm
     headers = ["Wk", "Hole", "Motor Type", "Job Type", "S20",
                "Total Hrs", "Total Drill", "Drill Hrs",
-               "Avg ROP", "Slide %", "MY Avg", "Incid", "Comment"]
+               "Avg ROP", "Slide %", "MY Avg", "Incid",
+               "Operator", "Job Number", "Phase", "Bend"]
     pdf.check_space(35)
-    pdf.sub_title("Longest Run Table (per Hole Size)")
+    pdf.sub_title("Longest Run Table (sorted by Total Drill)")
     left_x = (pdf.w - sum(cols)) / 2
 
     pdf.set_x(left_x)
@@ -428,18 +435,23 @@ def _kpi_longest_run_table(pdf, kpi):
     week_str = str(kpi.get("week", ""))
     week_num = week_str.split("-W")[-1] if "-W" in week_str else week_str
 
-    pdf.set_font("Helvetica", "", 6)
+    # Collect entries from all blocks, sort by Total Drill descending
+    lr_entries = []
     for b in kpi.get("blocks", []):
         lr = b.get("longest_run")
-        if not lr:
-            continue
+        if lr:
+            lr_entries.append((b["hole_size"], lr))
+    lr_entries.sort(key=lambda x: -x[1].get("total_drill", 0))
+
+    pdf.set_font("Helvetica", "", 6)
+    for hs, lr in lr_entries:
         mkey = _motor_key(lr.get("motor_type"))
         fill = _MOTOR_RGB.get(mkey, (255, 255, 255))
         pdf.set_fill_color(*fill)
         pdf.set_text_color(60, 60, 60)
         pdf.set_x(left_x)
         pdf.cell(cols[0], 4, str(week_num), align="C", fill=True)
-        pdf.cell(cols[1], 4, f'{b["hole_size"]:g}"', align="C", fill=True)
+        pdf.cell(cols[1], 4, f'{hs:g}"', align="C", fill=True)
         pdf.cell(cols[2], 4, _latin1(str(lr.get("motor_type", "")))[:12], align="C", fill=True)
         pdf.cell(cols[3], 4, _latin1(str(lr.get("job_type", "")))[:11], align="C", fill=True)
         pdf.cell(cols[4], 4, str(lr.get("series_20", "")), align="C", fill=True)
@@ -452,7 +464,10 @@ def _kpi_longest_run_table(pdf, kpi):
         pdf.cell(cols[10], 4, f"{my:.1f}" if my is not None else "", align="C", fill=True)
         inc = lr.get("incident_count", 0)
         pdf.cell(cols[11], 4, f"{inc}" if inc else "", align="C", fill=True)
-        pdf.cell(cols[12], 4, _latin1(lr.get("comment", "")), align="L", fill=True)
+        pdf.cell(cols[12], 4, _latin1(str(lr.get("operator", "")))[:14], align="C", fill=True)
+        pdf.cell(cols[13], 4, _latin1(str(lr.get("job_num", ""))), align="C", fill=True)
+        pdf.cell(cols[14], 4, _latin1(str(lr.get("phase", "")))[:14], align="C", fill=True)
+        pdf.cell(cols[15], 4, _latin1(str(lr.get("bend", ""))), align="C", fill=True)
         pdf.ln()
     pdf.set_font("Helvetica", "", 7)
 

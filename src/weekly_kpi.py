@@ -57,6 +57,31 @@ def _empty_metrics():
     }
 
 
+def _first_word(text):
+    """Return the first whitespace-delimited token of a name, e.g. 'PUREWEST ENERGY' -> 'PUREWEST'."""
+    if text is None:
+        return ""
+    s = str(text).strip()
+    if not s:
+        return ""
+    return s.split()[0]
+
+
+def _top_operator(df, op_col="OPERATOR"):
+    """Return the operator(s) with the most runs in df, formatted as 'NAME (N)'.
+    On ties, joins each tied operator with ' / ', with the count after each name.
+    Returns '' if no OPERATOR data is available."""
+    if op_col not in df.columns or len(df) == 0:
+        return ""
+    counts = df[op_col].dropna().value_counts()
+    if len(counts) == 0:
+        return ""
+    max_count = int(counts.iloc[0])
+    tied = sorted(counts[counts == max_count].index.tolist())
+    parts = [f"{_first_word(op)} ({max_count})" for op in tied if _first_word(op)]
+    return " / ".join(parts)
+
+
 def compute_weekly_kpi(current_df, prev_df, week=None):
     """
     Build the Weekly KPI Summary structure.
@@ -115,6 +140,7 @@ def compute_weekly_kpi(current_df, prev_df, week=None):
                 "g_pct_hrs": _safe_div(metrics["total_hrs"], g_total_hrs),
                 "w_pct_drill": _safe_div(metrics["total_drill"], w_total_drill),
                 "g_pct_drill": _safe_div(metrics["total_drill"], g_total_drill),
+                "top_operator": _top_operator(grp),
             })
         rows.sort(key=lambda r: (
             MOTOR_TYPE_ORDER.get(r["motor_type"].upper(), 99),
@@ -125,6 +151,7 @@ def compute_weekly_kpi(current_df, prev_df, week=None):
         curr_total = _compute_metrics(sub)
         curr_total["g_pct_hrs"] = _safe_div(curr_total["total_hrs"], g_total_hrs)
         curr_total["g_pct_drill"] = _safe_div(curr_total["total_drill"], g_total_drill)
+        curr_total["top_operator"] = _top_operator(sub)
 
         # Longest single run in this hole size (by TOTAL_DRILL)
         longest_run = None
@@ -146,12 +173,10 @@ def compute_weekly_kpi(current_df, prev_df, week=None):
                             return str(v)
                     return str(v)
 
-                comment = " | ".join([
-                    _fmt("JOB_NUM", as_int=True),
-                    _fmt("OPERATOR"),
-                    _fmt("Phase_CALC"),
-                    _fmt("BEND_HSG"),
-                ])
+                operator = _first_word(_fmt("OPERATOR"))
+                job_num = _fmt("JOB_NUM", as_int=True)
+                phase = _fmt("Phase_CALC")
+                bend = _fmt("BEND_HSG")
 
                 longest_run = {
                     "motor_type": _fmt("MOTOR_TYPE2"),
@@ -162,7 +187,10 @@ def compute_weekly_kpi(current_df, prev_df, week=None):
                     "g_pct_hrs": _safe_div(run_metrics["total_hrs"], g_total_hrs),
                     "w_pct_drill": _safe_div(run_metrics["total_drill"], w_total_drill),
                     "g_pct_drill": _safe_div(run_metrics["total_drill"], g_total_drill),
-                    "comment": comment,
+                    "operator": operator,
+                    "job_num": job_num,
+                    "phase": phase,
+                    "bend": bend,
                 }
 
         prev_total = _compute_metrics(prev_sub) if len(prev_sub) else _empty_metrics()
@@ -192,5 +220,6 @@ def compute_weekly_kpi(current_df, prev_df, week=None):
         "grand_prev_total_drill": g_prev_drill,
         "grand_prev_runs": g_prev_runs,
         "grand_prev_incidents": g_prev_incidents,
+        "grand_top_operator": _top_operator(cur),
         "blocks": blocks,
     }
