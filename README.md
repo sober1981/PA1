@@ -43,16 +43,20 @@ Wednesday must read Local; Friday must read Shared. Otherwise Cat 4's QC Audit s
 
 All three call `run_agent.py` with different flags. See [HOW_TO_RUN.md](HOW_TO_RUN.md) for the full per-bat behavior matrix and the `--source local|shared` CLI flag.
 
-## Report Structure (v2.5)
+## Report Structure (v2.7)
 
-The report is organized into 4 categories:
+The report is organized into 4 categories. Cat 1 spans 4 dedicated pages so each block of information stays together.
 
-### Category 1: Week vs Previous Week
-| Section | Description |
-|---------|-------------|
-| **A - Weekly Summary (KPI tables)** | Three per-hole-size tables: **Summary** (totals + diff vs prev week, with green/yellow/red gradients on Total Runs/Hrs/Drill, reversed gradient on Total Incidents, red/green diff fonts, and an `OP w/ More Runs` column in `EXXON (4)` format), **Detailed** (per MOTOR_TYPE2 / JOB_TYPE / SERIES 20 with motor-type fills, per-hole-size winner highlight, and per-row `OP w/ More Runs`), **Longest Run** (sorted by Total Drill descending, with Operator / Job Number / Phase / Bend as separate columns). Same tables exported as a standalone Excel. |
-| **B - Curves Analysis** | 1-run curves (best outcome) vs multi-run curves. Flags operators. SOURCE = Motor_KPI only. |
-| **C - Reason to POOH** | Breakdown by classification (TD, ROP, Bit, Motor, MWD, BHA, Pressure, Other). Motor detail shows Operator, Hole Size, and SN. Wednesday uses REASON_POOH, Friday uses REASON_POOH_QC. |
+### Category 1: Week vs Previous Week (4 pages)
+
+| Page | Content |
+|---|---|
+| **1 — 1A. Weekly Summary** | Per-hole-size **Summary table** (totals + diff vs prev week, with green/yellow/red gradients on Total Runs/Hrs/Drill, reversed gradient on Total Incidents, red/green diff fonts, and an `OP w/ More Runs` column in `EXXON (4)` format). Plus the **Longest Run table** (sorted by Total Drill desc, with Operator / Job Number / Phase / Bend as separate columns). |
+| **2 — Trends** | Two **12-week stacked-area charts** (matplotlib) embedded as PNG: Total Drill by Hole Size, and Number of Runs by Hole Size. Color groups by hole-size integer (6=blue, 7=orange, 8=gray, 9=red, 10=purple, 11=green, 12=brown, …) with light→dark shading inside each group. All hole sizes included. |
+| **3 — Detailed + 1B Curves** | The **Detailed table** (per MOTOR_TYPE2 / JOB_TYPE / SERIES 20 with motor-type fills, per-hole-size winner highlight, and per-row `OP w/ More Runs`) followed by **1B. Curves Analysis** (1-run curves vs multi-run curves, SOURCE = Motor_KPI only). |
+| **4 — 1C Reason to POOH** | **12-week 100% stacked-bar chart** of POOH categories (TD, ROP, Bit, Motor, MWD, BHA, Pressure, Other) with per-segment percentage labels and a **Total Runs overlay line** on a secondary axis. Wed uses `REASON_POOH`, Fri uses `REASON_POOH_QC`. All sources included (no SOURCE filter), so totals match Cat 1A. **Motor Issues Detail** table follows on the same page. |
+
+The Cat 1A KPI tables are also exported as a standalone Excel (`PA1 - {Wed/Fri} Weekly KPI - Week {N} - {master}.xlsx`).
 
 ### Category 2: Monthly Highlights
 | Section | Description |
@@ -169,6 +173,7 @@ scorecard-pa/
 │   ├── qc_audit.py           # Category 4: QC Audit — Wed vs Fri diff engine (Friday only)
 │   ├── weekly_kpi.py         # Weekly KPI Summary: per-hole-size Summary / Detailed / Longest Run computation
 │   ├── weekly_kpi_excel.py   # Weekly KPI Summary Excel writer (3 tables, gradients, motor-type fills)
+│   ├── trends.py             # 12-week trend charts (stacked-area Total Drill / # Runs, 100%-stacked POOH bar)
 │   ├── comparator.py         # Multi-level fallback baseline comparison
 │   ├── state.py              # Wednesday/Friday state management (last_run.json)
 │   ├── report.py             # Console output (all 4 categories)
@@ -179,7 +184,7 @@ scorecard-pa/
 ├── logs/                     # Scheduled-run logs (git-ignored)
 ├── tests/
 │   └── __init__.py
-├── requirements.txt          # pandas, openpyxl, pyyaml, fpdf2, pywin32, etc.
+├── requirements.txt          # pandas, openpyxl, pyyaml, fpdf2, pywin32, matplotlib, etc.
 ├── .env                      # SharePoint credentials (git-ignored)
 └── .gitignore
 ```
@@ -246,6 +251,8 @@ scorecard-pa/
 - [x] QC Audit snapshot fix + Wednesday scheduled task + HOW_TO_RUN guide (v2.3)
 - [x] Weekly KPI Summary tables -- Summary / Detailed / Longest Run, in PDF Cat 1A and as standalone Excel; interactive week picker for manual runs (v2.4)
 - [x] OP w/ More Runs column (Summary + Detailed); Longest Run sorted by Total Drill with Operator / Job Number / Phase / Bend split out of the comment (v2.5)
+- [x] Local vs Shared file source split (data/local_paths + data/shared_paths in config; --source local|shared CLI flag); manual.bat asks Local/Shared, scheduled bats forced (v2.6)
+- [x] 12-week trend charts in PDF: Cat 1A stacked-area charts (Total Drill + # Runs by Hole Size) and Cat 1C 100%-stacked POOH bar with Total Runs overlay; Cat 1 reorganized across 4 pages; matplotlib added (v2.7)
 - [ ] Force Friday to use same week as Wednesday (prevent week drift from extra rows)
 - [ ] Friday executive summary PDF (concise, management-ready)
 - [ ] QC Audit historical trends (track QC workload week over week)

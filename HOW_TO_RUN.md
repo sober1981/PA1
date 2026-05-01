@@ -4,12 +4,19 @@
 
 Every PA1 run generates **two attachments**:
 - **PDF**: full performance report (Categories 1, 2, 3, and 4 on Friday).
-  Category 1A includes three KPI tables: **Summary**, **Detailed**, and
-  **Longest Run** — with motor-type fills, a green-yellow-red gradient
-  on the Summary numeric columns, red/green diff fonts, and a per-row
-  **OP w/ More Runs** column showing the operator with the most runs.
+  Cat 1 spans 4 pages:
+    1. **1A. Summary table** + **Longest Run table** (per-hole-size, with
+       gradients, motor-type fills, `OP w/ More Runs` column, etc.)
+    2. **Trends** — two 12-week stacked-area charts (Total Drill and
+       Number of Runs, by Hole Size). All hole sizes included; per-integer
+       color groups with light→dark shading inside each group.
+    3. **Detailed table** + **1B. Curves Analysis**.
+    4. **1C. Reason to POOH** — 12-week 100%-stacked bar chart with
+       per-segment percentage labels and a **Total Runs overlay line** on
+       a secondary axis. Wed uses `REASON_POOH`; Fri uses `REASON_POOH_QC`.
+       Followed by **Motor Issues Detail** on the same page.
 - **Excel**: standalone Weekly KPI Summary with the same three tables
-  for QC and side-by-side comparison.
+  (Summary, Detailed, Longest Run) for QC and side-by-side comparison.
 
 Both files are emailed to `jsoberanes@scoutdownhole.com` and saved to
 the project folder.
@@ -19,6 +26,8 @@ the project folder.
 - The master Excel file (`MASTER_MCS_MERGE_*.xlsx`) must already be in
   SharePoint / Teams sync or accessible locally.
 - Outlook must be open on your machine (so the email can be sent).
+- Python dependencies installed (`pip install -r requirements.txt`):
+  pandas, openpyxl, pyyaml, fpdf2, pywin32, matplotlib.
 
 ---
 
